@@ -64,6 +64,8 @@ button.icon svg{width:18px;height:18px;fill:currentColor;display:block}
 .dock{width:100%;min-width:0;background:var(--panel);border:1px solid var(--panel-border);border-radius:var(--radius);
   -webkit-backdrop-filter:blur(var(--blur)) saturate(1.6);backdrop-filter:blur(var(--blur)) saturate(1.6);
   padding:12px 14px;display:grid;grid-template-columns:minmax(0,1fr);gap:10px}
+#more{display:grid;gap:10px}
+button:disabled{opacity:.35;pointer-events:none}
 .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .sp{flex:1}
 label{font-size:12px;color:var(--dim);display:flex;align-items:center;gap:6px;white-space:nowrap}
@@ -145,7 +147,7 @@ body.drag::after{content:"Drop music & photos";position:fixed;inset:14px;z-index
   </div>
 </header>
 
-<div class="ui hint" id="hint">Drop music and photos anywhere, or hit Demo</div>
+<div class="ui hint" id="hint">Add music or paste a link to start</div>
 <div class="ui ext" id="ext" hidden>
   <div class="grip" id="extGrip" title="Drag to move"><button id="bSync" title="Get the visuals following the sound again">Sync</button><span></span><button id="bExtX" title="Close player">×</button></div>
   <div id="extBox"></div>
@@ -159,15 +161,21 @@ body.drag::after{content:"Drop music & photos";position:fixed;inset:14px;z-index
     <button id="bMic" title="Listen through the microphone">Mic</button>
     <button id="bStream" title="Visualize audio from another tab or app (Spotify, Apple Music, YouTube...)">Stream</button>
     <button id="bLink" title="Play a YouTube, MP3 or MP4 link">Link</button>
-    <button id="bDemo">Demo</button>
     <button id="bPhotos">Photos</button>
     <span class="sp"></span>
-    <label title="Tint everything with colors pulled from the current photo"><input type="checkbox" id="cColors" checked>Photo colors</label>
-    <label>Intensity<input type="range" id="sens" min="0.4" max="2.5" step="0.05" value="1"></label>
-    <label>Volume<input type="range" id="vol" min="0" max="1" step="0.01" value="1"></label>
-    <button id="bLyr" title="Show live lyrics for the current song">Lyrics</button>
-    <button id="bBg" title="Change the background style (B)">Clouds</button>
-    <button id="bFull" class="icon" title="Fullscreen (F)"><svg viewBox="0 0 24 24"><path d="M4 4h6v2H6v4H4zM14 4h6v6h-2V6h-4zM4 14h2v4h4v2H4zM18 14h2v6h-6v-2h4z"/></svg></button>
+    <button id="bMore" class="icon" title="Settings"><svg viewBox="0 0 24 24"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg></button>
+  </div>
+  <div id="more" hidden>
+    <div class="row">
+      <button id="bLyr" title="Show live lyrics for the current song">Lyrics</button>
+      <button id="bBg" title="Change the background style (B)">Clouds</button>
+      <button id="bFull" class="icon" title="Fullscreen (F)"><svg viewBox="0 0 24 24"><path d="M4 4h6v2H6v4H4zM14 4h6v6h-2V6h-4zM4 14h2v4h4v2H4zM18 14h2v6h-6v-2h4z"/></svg></button>
+    </div>
+    <div class="row">
+      <label title="Tint everything with colors pulled from the current photo"><input type="checkbox" id="cColors" checked>Photo colors</label>
+      <label>Intensity<input type="range" id="sens" min="0.4" max="2.5" step="0.05" value="1"></label>
+      <label>Volume<input type="range" id="vol" min="0" max="1" step="0.01" value="1"></label>
+    </div>
   </div>
   <div class="row" id="lyrRow" hidden>
     <label>Lyric timing</label>
@@ -183,7 +191,6 @@ body.drag::after{content:"Drop music & photos";position:fixed;inset:14px;z-index
     <button id="bPrev" class="icon" title="Previous"><svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zM9.5 12l8.5 6V6z"/></svg></button>
     <button id="bPlay" class="icon" title="Play / pause (Space)"></button>
     <button id="bNext" class="icon" title="Next"><svg viewBox="0 0 24 24"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/></svg></button>
-    <button id="bStar" class="icon" title="Use this song as your Demo" hidden><svg viewBox="0 0 24 24"><path d="M12 3l2.7 5.8 6.3.8-4.6 4.4 1.2 6.3L12 17.300 6.400 20.300l1.200-6.300L3 9.600l6.300-.8z"/></svg></button>
     <span class="time" id="tCur">0:00</span>
     <input type="range" id="seek" min="0" max="1000" value="0">
     <span class="time" id="tDur">0:00</span>
@@ -499,9 +506,9 @@ function markThumb(){
 }
 
 // ---------- audio ----------
-let ac,an,freq,bt,fl,prevE=0,liveStream,liveSrc,demo=null,out,vol=1;
+let ac,an,freq,bt,fl,prevE=0,liveStream,liveSrc,out,vol=1;
 let musicOn=false,loudT=0,quietT=0,armed=false;
-const HINT='Drop music and photos anywhere, or hit Demo';
+const HINT='Add music or paste a link to start';
 const isLive=()=>mode=='mic'||mode=='stream';
 const save=(k,v)=>{try{localStorage.setItem(k,v)}catch{}};
 // iOS: 'playback' keeps sound audible with the ringer switch off
@@ -519,21 +526,18 @@ function ensureAudio(){
 function stopOthers(keep){
   if(keep!='file')audio.pause();
   if(keep!='live'&&liveStream){liveStream.getTracks().forEach(t=>t.stop());liveSrc.disconnect();liveStream=null}
-  if(keep!='demo'&&demo){clearInterval(demo.timer);demo.bus.disconnect();demo=null}
 }
 function setMode(m){
   mode=m;
   $('bMic').classList.toggle('on',m=='mic');
-  $('bDemo').classList.toggle('on',m=='demo'||(m=='file'&&!!playlist[ti]&&!!playlist[ti].demo));
-  syncStar();
+  $('bNext').disabled=!!ext;
   $('bStream').classList.toggle('on',m=='stream');
   musicOn=false;loudT=quietT=0;
   if(isLive())$('track').textContent=ext?ext.title:'Waiting for music…';
-  if(m=='demo')$('track').textContent='Demo beat';
   if(m=='idle')$('track').textContent=ext?ext.title:playlist.length?playlist[ti].name:'No track';
   syncPlay();updateHint();wake();lyricsRefresh();
 }
-function syncPlay(){$('bPlay').innerHTML=(ext?ext.playing:(mode=='file'&&!audio.paused)||mode=='demo')?ICON.pause:ICON.play}
+function syncPlay(){$('bPlay').innerHTML=(ext?ext.playing:mode=='file'&&!audio.paused)?ICON.pause:ICON.play}
 function updateHint(){
   const h=$('hint');
   h.textContent=armed?'Tap anywhere to start listening':isLive()?'Listening. Play something and Power takes over':HINT;
@@ -562,7 +566,7 @@ const playlist=[];let ti=0;
 function addTracks(files){
   const first=playlist.length;
   for(const f of files){
-    const tr={name:f.name.replace(/\.[^.]+$/,''),url:URL.createObjectURL(f),file:f};
+    const tr={name:f.name.replace(/\.[^.]+$/,''),url:URL.createObjectURL(f)};
     playlist.push(tr);readTags(f,tr);
   }
   if(playlist.length>first&&(mode!='file'||audio.paused))playTrack(first);
@@ -624,7 +628,6 @@ function playTrack(i){
 }
 function togglePlay(){
   if(ext){extToggle();return}
-  if(mode=='demo'){stopOthers('none');setMode('idle');return}
   if(!playlist.length){$('fMusic').click();return}
   ensureAudio();
   if(mode!='file'){stopOthers('file');$('track').textContent=playlist[ti].name;setMode('file');if(!audio.src)audio.src=playlist[ti].url;audio.play();return}
@@ -793,84 +796,6 @@ addEventListener('message',e=>{
     if(info.duration)ext.dur=info.duration;
   }catch{}
 });
-
-// ---------- your own Demo song ----------
-// the star saves the playing file in this browser's storage (never uploaded), and Demo plays it from then on
-const idbDo=(rw,fn)=>new Promise((res,rej)=>{
-  const o=indexedDB.open('power',1);
-  o.onupgradeneeded=()=>o.result.createObjectStore('kv');
-  o.onerror=()=>rej(o.error);
-  o.onsuccess=()=>{
-    const tx=o.result.transaction('kv',rw),rq=fn(tx.objectStore('kv'));
-    tx.oncomplete=()=>res(rq.result);tx.onerror=tx.onabort=()=>rej(tx.error);
-  };
-});
-let demoFile=null;
-try{idbDo('readonly',s=>s.get('demo')).then(v=>{demoFile=v||null}).catch(()=>{})}catch{}
-function syncStar(){
-  const tr=playlist[ti],b=$('bStar');
-  b.hidden=!(mode=='file'&&tr&&tr.file);
-  b.classList.toggle('on',!!tr&&!!tr.demo);
-}
-async function toggleStar(){
-  const tr=playlist[ti];
-  if(!tr||!tr.file)return;
-  try{
-    if(tr.demo){
-      await idbDo('readwrite',s=>s.delete('demo'));
-      demoFile=null;tr.demo=false;setMode(mode);toast('Demo is back to the built-in beat');
-    }else{
-      await idbDo('readwrite',s=>s.put(tr.file,'demo'));
-      demoFile=tr.file;playlist.forEach(p=>p.demo=p===tr);setMode(mode);toast('Saved. Demo now plays this song on this device');
-    }
-  }catch{toast('Could not save the song on this device')}
-}
-function demoClick(){
-  if(mode=='demo'||!demoFile){toggleDemo();return}
-  const now=playlist[ti];
-  if(mode=='file'&&now&&now.demo&&!audio.paused){audio.pause();setMode('idle');return}
-  let i=playlist.findIndex(p=>p.demo);
-  if(i<0){
-    const tr={name:(demoFile.name||'Demo').replace(/\.[^.]+$/,''),url:URL.createObjectURL(demoFile),file:demoFile,demo:true};
-    playlist.push(tr);readTags(demoFile,tr);i=playlist.length-1;
-  }
-  playTrack(i);
-}
-
-// built-in synth loop so there is something to watch with zero setup
-function toggleDemo(){
-  if(mode=='demo'){stopOthers('none');setMode('idle');return}
-  closeExt();sess('playback');ensureAudio();stopOthers('none');
-  const bus=ac.createGain();bus.gain.value=.7;bus.connect(an);bus.connect(out);
-  const nb=ac.createBuffer(1,ac.sampleRate*.3,ac.sampleRate),nd=nb.getChannelData(0);
-  for(let i=0;i<nd.length;i++)nd[i]=Math.random()*2-1;
-  const tone=(type,f,t,dur,g,f2)=>{
-    const o=ac.createOscillator(),v=ac.createGain();o.type=type;o.frequency.setValueAtTime(f,t);
-    if(f2)o.frequency.exponentialRampToValueAtTime(f2,t+dur);
-    v.gain.setValueAtTime(g,t);v.gain.exponentialRampToValueAtTime(.001,t+dur);
-    o.connect(v);v.connect(bus);o.start(t);o.stop(t+dur);
-  };
-  const hit=(type,f,t,dur,g)=>{
-    const s=ac.createBufferSource(),fl=ac.createBiquadFilter(),v=ac.createGain();
-    s.buffer=nb;fl.type=type;fl.frequency.value=f;
-    v.gain.setValueAtTime(g,t);v.gain.exponentialRampToValueAtTime(.001,t+dur);
-    s.connect(fl);fl.connect(v);v.connect(bus);s.start(t);s.stop(t+dur);
-  };
-  const roots=[55,55,43.65,49],scale=[220,261.63,293.66,329.63,392,440,523.25];
-  const sched=(s,t)=>{
-    if(s%4==0)tone('sine',150,t,.3,1,40);
-    if(s%4==2)hit('highpass',7000,t,.05,.22);
-    if(s%8==4)hit('bandpass',1800,t,.13,.4);
-    if(s%4!=0)tone('sawtooth',roots[(s>>4)&3],t,.12,.2);
-    if(s%2==0)tone('triangle',scale[(s*3+(s>>4)*2)%scale.length]*2,t,.2,.07);
-  };
-  let step=0,next=ac.currentTime+.05;
-  const timer=setInterval(()=>{
-    while(next<ac.currentTime+.15){sched(step,next);next+=60/124/4;step=(step+1)%64}
-  },25);
-  demo={timer,bus};
-  setMode('demo');
-}
 
 // ---------- analysis ----------
 function analyse(dt,now){
@@ -1131,7 +1056,7 @@ function setBg(i,quiet){
   save('pulse-bg',bgNext);
   if(!quiet)toast('Background: '+BGS[bgNext]);
 }
-// file and demo sound go through our own gain; a YouTube or plain-link player has to be asked instead
+// file sound goes through our own gain; a YouTube or plain-link player has to be asked instead
 // (iOS ignores that request: there only the phone's volume buttons change a video's loudness)
 function setVol(v){
   vol=Math.max(0,Math.min(1,v));
@@ -1149,7 +1074,7 @@ let idleT;
 function wake(){
   document.body.classList.remove('idle');clearTimeout(idleT);
   idleT=setTimeout(()=>{
-    const busy=mode=='file'||mode=='demo'||musicOn;
+    const busy=mode=='file'||musicOn;
     if(busy&&!dragO&&document.activeElement.id!='linkIn'&&!(canHover&&document.querySelector('.dock:hover,.top:hover,.thumbs:hover,.ext:hover')))document.body.classList.add('idle');
   },3500);
 }
@@ -1169,8 +1094,6 @@ $('bMic').onclick=toggleMic;
 $('bStream').onclick=toggleStream;
 $('bStream').hidden=!(navigator.mediaDevices&&navigator.mediaDevices.getDisplayMedia)||!canHover;
 $('bFull').hidden=!document.documentElement.requestFullscreen;
-$('bDemo').onclick=demoClick;
-$('bStar').onclick=toggleStar;
 $('bLink').onclick=()=>{const r=$('linkRow');r.hidden=!r.hidden;if(!r.hidden)$('linkIn').focus()};
 $('bGo').onclick=loadLink;
 $('linkIn').onkeydown=e=>{if(e.key=='Enter')loadLink()};
@@ -1181,22 +1104,36 @@ $('bLyr').onclick=()=>setLyrics((lyrMode+1)%3);
 $('bLyrE').onclick=()=>nudge(.25);
 $('bLyrL').onclick=()=>nudge(-.25);
 $('bPlay').onclick=togglePlay;
-$('bPrev').onclick=()=>playTrack(ti-1);
+$('bMore').onclick=()=>{const m=$('more');m.hidden=!m.hidden;$('bMore').classList.toggle('on',!m.hidden);save('pulse-more',m.hidden?'':'1')};
+try{if(localStorage.getItem('pulse-more')){$('more').hidden=false;$('bMore').classList.add('on')}}catch{}
+$('bPrev').onclick=()=>ext?seekTo(0):playTrack(ti-1);
 $('bNext').onclick=()=>playTrack(ti+1);
 $('bFull').onclick=toggleFull;
 $('sens').oninput=e=>sens=+e.target.value;
 $('vol').oninput=e=>setVol(+e.target.value);
 try{const sv=localStorage.getItem('pulse-vol');if(sv!=null&&sv!==''){vol=Math.max(0,Math.min(1,+sv||0));$('vol').value=vol}}catch{}
 $('cColors').onchange=e=>usePhotoColors=e.target.checked;
+// the seek bar follows whichever player is active: the audio element, a plain link, or the YouTube player
+const songDur=()=>ext?(ext.kind=='yt'?ext.dur||0:ext.a.duration||0):audio.duration||0;
+function seekTo(s){
+  if(ext&&ext.kind=='yt'){
+    ext.el.contentWindow.postMessage(JSON.stringify({event:'command',func:'seekTo',args:[s,true]}),YT);
+    ext.t=s;ext.tAt=performance.now();
+  }else if(ext)ext.a.currentTime=s;
+  else audio.currentTime=s;
+  lyrLine=-2;
+}
 let seeking=false;
+function syncSeek(){
+  const d=songDur(),t=ext||mode=='file'?songTime()||0:0;
+  if(!seeking)$('seek').value=d?Math.min(1,t/d)*1000:0;
+  $('tCur').textContent=fmt(Math.min(t,d||t));$('tDur').textContent=fmt(d);
+}
 $('seek').oninput=()=>seeking=true;
-$('seek').onchange=e=>{if(audio.duration)audio.currentTime=e.target.value/1000*audio.duration;seeking=false};
+$('seek').onchange=e=>{const d=songDur();if(d)seekTo(e.target.value/1000*d);seeking=false};
+setInterval(syncSeek,250);
 audio.onplay=audio.onpause=syncPlay;
 audio.onended=()=>playTrack(ti+1);
-audio.ontimeupdate=()=>{
-  if(!seeking&&audio.duration)$('seek').value=audio.currentTime/audio.duration*1000;
-  $('tCur').textContent=fmt(audio.currentTime);$('tDur').textContent=fmt(audio.duration);
-};
 addEventListener('resize',()=>{resize();if(!extEl.hidden)placeExt(ex,ey)});
 document.addEventListener('visibilitychange',()=>{
   if(document.hidden)return;
