@@ -2,6 +2,7 @@
 <html lang="en" data-skin="apple">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'unsafe-inline'; img-src data: blob: https://i.ytimg.com; media-src blob: https: http:; connect-src https://lrclib.net https://www.youtube.com; frame-src https://www.youtube.com; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -98,6 +99,7 @@ input[type=checkbox]{accent-color:var(--accent)}
   transition:opacity .4s,transform .3s;text-shadow:0 2px 14px rgba(0,0,0,.6);text-wrap:balance}
 #lyrIn p.msg{opacity:.8;transform:none;font-weight:600}
 #lyrIn p.on{opacity:1;transform:scale(calc(1 + var(--beat,0)*.03))}
+#lyr.side,#lyr.side.hl{right:40px;height:13em;border-radius:20px}
 #lyr.hl{height:7.4em;font-size:clamp(20px,3.3vw,30px);background:rgba(0,0,0,.42);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
 #lyr.hl p{width:fit-content;max-width:100%;margin:.12em auto;padding:.18em .6em;border-radius:.45em;opacity:.6}
 #lyr.hl p.on{opacity:1;background:var(--accent);box-shadow:0 4px 18px rgba(0,0,0,.35);
@@ -289,7 +291,7 @@ void main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);gl_Position=vec4(p*2.-
 const FS=`#version 300 es
 precision highp float;
 uniform vec2 uRes;
-uniform float uTime,uBass,uMid,uTreb,uBeat,uTheme,uMix,uHas,uAspA,uAspB,uArt,uRot,uCy,uBg,uFlow,uDip,uVar,uWarp;
+uniform float uTime,uBass,uMid,uTreb,uBeat,uTheme,uMix,uHas,uAspA,uAspB,uArt,uRot,uCy,uBg,uFlow,uDip,uVar,uWarp,uCx;
 uniform vec3 uC1,uC2,uC3;
 uniform sampler2D uA,uB;
 out vec4 o;
@@ -458,10 +460,11 @@ void main(){
 
   // artwork: rounded square (Apple) morphing to a spinning disc (Spotify)
   float s=uArt*(1.+uBeat*.05+uBass*.03);
-  vec2 q=(p-vec2(0.,uCy))/s;
+  vec2 q=(p-vec2(uCx,uCy))/s;
   float rr=.3;
   float dd=mix(length(max(abs(q)-1.+rr,0.))-rr,length(q)-1.,uTheme);
   col*=1.-.4*exp(-max(dd,0.)*3.);
+  col+=mix(uC1,vec3(1.),.3)*exp(-max(dd,0.)*6.)*uBeat*.3;
   float fw=1.5/(uRes.y*s);
   float m=smoothstep(fw,-fw,dd);
   if(m>0.){
@@ -488,7 +491,7 @@ function initGL(){
   gl.linkProgram(pr);
   if(!gl.getProgramParameter(pr,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(pr));
   gl.useProgram(pr);
-  for(const n of ['uRes','uTime','uBass','uMid','uTreb','uBeat','uTheme','uMix','uHas','uAspA','uAspB','uArt','uRot','uCy','uBg','uFlow','uDip','uVar','uWarp','uC1','uC2','uC3','uA','uB'])
+  for(const n of ['uRes','uTime','uBass','uMid','uTreb','uBeat','uTheme','uMix','uHas','uAspA','uAspB','uArt','uRot','uCy','uBg','uFlow','uDip','uVar','uWarp','uCx','uC1','uC2','uC3','uA','uB'])
     U[n]=gl.getUniformLocation(pr,n);
   gl.uniform1i(U.uA,0);gl.uniform1i(U.uB,1);
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
@@ -505,15 +508,30 @@ function makeTex(src){
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
   return t;
 }
-let W=0,H=0,artS=.22,cyOff=.06,dpr=1;
+let W=0,H=0,artS=.22,cyOff=.06,cxOff=0,artT=.22,cyT=.06,cxT=0,dpr=1,laidOut=false;
+function layout(){
+  const r=W/H,wide=r>=.8,lyrOn=!lyrEl.hidden,side=lyrOn&&r>=1.25,ih=innerHeight;
+  artT=wide&&lyrOn&&!side?.19:Math.min(.22,.36*r);
+  cyT=!wide?.15:lyrOn&&!side?.13:.06; // portrait: lift the artwork clear of the taller dock
+  cxT=side?-.3:0;
+  lyrEl.classList.toggle('side',side);
+  if(side){
+    lyrEl.style.left=(innerWidth/2+.11*ih)+'px';
+    lyrEl.style.top=(ih*(.5-cyT)-lyrEl.offsetHeight/2)+'px';
+  }else{
+    lyrEl.style.left='';
+    lyrEl.style.top=(ih*(.5-cyT)+artT*ih*1.58)+'px';
+  }
+  lyrLine=-2;
+}
+let qual=1,qualAt=4,slowAvg=.016;
 function resize(){
-  dpr=Math.min(devicePixelRatio||1,1.5);
+  dpr=Math.min(devicePixelRatio||1,1.5)*qual;
   W=Math.round(innerWidth*dpr);H=Math.round(innerHeight*dpr);
   glc.width=fxc.width=W;glc.height=fxc.height=H;
   gl.viewport(0,0,W,H);
-  artS=Math.min(.22,.36*W/H);
-  cyOff=W/H<.8?.15:.06; // portrait: lift the artwork clear of the taller dock
-  lyrEl.style.top=(innerHeight*(.5-cyOff)+artS*innerHeight*1.58)+'px';
+  layout();
+  if(!laidOut){laidOut=true;artS=artT;cyOff=cyT}
 }
 
 // ---------- photos ----------
@@ -635,6 +653,8 @@ function loadTags(){
   return tagLib||(tagLib=new Promise(r=>{
     const s=document.createElement('script');
     s.src='https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js';
+    // only run the library if it is byte-for-byte the file that was checked
+    s.integrity='sha384-JpTt7qxVx1X/pHeYiCfqFdKRu2HF1MBGr1kEXtbNIGwwryGWMbbW78onU3bdkAHZ';s.crossOrigin='anonymous';
     s.onload=()=>r(window.jsmediatags||null);s.onerror=()=>r(null);
     document.head.appendChild(s);
   }));
@@ -730,7 +750,7 @@ function showExt(){
   extEl.hidden=false;
   if(ex==null){
     let p=null;try{p=JSON.parse(localStorage.getItem('pulse-ext'))}catch{}
-    if(p)placeExt(p[0],p[1]);
+    if(Array.isArray(p)&&isFinite(p[0])&&isFinite(p[1]))placeExt(p[0],p[1]);
     else placeExt(innerWidth,document.querySelector('.bottom').getBoundingClientRect().top-extEl.offsetHeight-10);
   }else placeExt(ex,ey);
 }
@@ -850,8 +870,11 @@ addEventListener('message',e=>{
 });
 
 // ---------- analysis ----------
+const fluxH=[],gaps=[];let tempo=0,missed=0;
+function fire(s){L.beat=Math.max(L.beat,s);beats++;onBeat(s)}
 function analyse(dt,now){
   let b=0,m=0,tr=0;
+  const kUp=1-Math.exp(-dt*55),kDown=1-Math.exp(-dt*10.5);
   // a paused link means silence, even though the mic still hears the room
   const gated=ext&&!ext.playing&&isLive();
   if(gated&&musicOn){musicOn=false;loudT=quietT=0;updateHint();wake()}
@@ -865,10 +888,11 @@ function analyse(dt,now){
       const a=Math.max(1,Math.floor(40*Math.pow(2,i/N*8)/hz)),z=Math.max(a,Math.floor(40*Math.pow(2,(i+1)/N*8)/hz));
       let mx=0;for(let j=a;j<=z&&j<freq.length;j++)if(freq[j]>mx)mx=freq[j];
       const v=Math.pow(Math.min(1,mx/255*sens*(.75+i/N*.7)),1.8);
-      bars[i]+=(v-bars[i])*(v>bars[i]?.6:.16);
+      bars[i]+=(v-bars[i])*(v>bars[i]?kUp:kDown);
     }
-  }else for(let i=0;i<N;i++)bars[i]*=.9;
-  const ease=(c,v)=>c+(Math.min(1.2,v)-c)*(v>c?.5:.12);
+  }else{const fall=Math.exp(-dt*6.3);for(let i=0;i<N;i++)bars[i]*=fall}
+  const eUp=1-Math.exp(-dt*42),eDown=1-Math.exp(-dt*7.7);
+  const ease=(c,v)=>c+(Math.min(1.2,v)-c)*(v>c?eUp:eDown);
   L.bass=ease(L.bass,b);L.mid=ease(L.mid,m);L.treb=ease(L.treb,tr);
 
   // beats come from an unsmoothed linear-amplitude kick band, so a steady bassline does not mask them
@@ -878,15 +902,36 @@ function analyse(dt,now){
     const z=Math.max(2,Math.round(150/(ac.sampleRate/bt.fftSize)));
     for(let i=1;i<=z;i++)e+=Math.pow(10,fl[i]/20);
   }
+  // an onset is a sudden rise in the kick band, judged against how jumpy that band has been over the last second
   hist.push(e);if(hist.length>60)hist.shift();
-  const avg=hist.reduce((s,v)=>s+v,0)/hist.length;
-  if(e>avg*1.35&&e>prevE*1.15&&b>.12&&now-lastBeat>.24){lastBeat=now;L.beat=1;beats++;onBeat(now)}
-  prevE=e;
-  L.beat*=Math.exp(-dt*5);
+  let avg=0;for(const v of hist)avg+=v;avg/=hist.length;
+  const flux=Math.max(0,e-prevE);prevE=e;
+  fluxH.push(flux);if(fluxH.length>64)fluxH.shift();
+  let mean=0;for(const v of fluxH)mean+=v;mean/=fluxH.length;
+  let sd=0;for(const v of fluxH)sd+=(v-mean)*(v-mean);sd=Math.sqrt(sd/fluxH.length);
+  const gap=now-lastBeat,live=b>.1;
+  if(live&&flux>mean+1.8*sd&&flux>avg*.25&&gap>(tempo?tempo*.55:.22)){
+    // learn the tempo from the spacing of real hits
+    if(gap>.25&&gap<1.3){
+      gaps.push(gap);if(gaps.length>10)gaps.shift();
+      let T=[...gaps].sort((a,c)=>a-c)[gaps.length>>1];
+      while(T<.33)T*=2;while(T>.8)T/=2;
+      const fit=gaps.filter(g=>{const r=g/T,k=Math.round(r)||1;return Math.abs(r-k)<.12*k||Math.abs(r-.5)<.06}).length;
+      tempo=gaps.length>=6&&fit>=gaps.length-1?T:0;
+    }
+    lastBeat=now;missed=0;
+    fire(Math.min(1,.55+(flux-mean)/(6*sd+1e-9)));
+  }else if(live&&tempo&&gap>tempo*1.06){
+    // a locked tempo carries the pulse through a hit the detector did not catch
+    if(gap<tempo*2.2&&missed<4){lastBeat+=tempo;missed++;fire(.55)}
+    else{tempo=0;gaps.length=0;missed=0}
+  }
+  L.beat*=Math.exp(-dt*6);
 }
-function onBeat(){
-  rings.push({r:1,a:1});
-  const sp=theme=='spotify',n=sp?14:8;
+function onBeat(s){
+  // harder hits throw brighter rings and more particles
+  rings.push({r:1,a:.45+s*.55});
+  const sp=theme=='spotify',n=Math.round((sp?14:8)*(.5+s*.6));
   for(let i=0;i<n&&parts.length<300;i++){
     const a=Math.random()*Math.PI*2,v=(sp?.6:.25)+Math.random()*(sp?1:.5);
     parts.push({a,d:1.08,v,life:1,size:(sp?1:2.2)*(.6+Math.random())});
@@ -897,7 +942,7 @@ function onBeat(){
 // ---------- overlay (spectrum, rings, particles) ----------
 function drawFx(dt){
   x.clearRect(0,0,W,H);
-  const cx=W/2,cy=H/2-cyOff*H,R=artS*H*(1+L.beat*.05+L.bass*.03),sp=theme=='spotify';
+  const cx=W/2+cxOff*H,cy=H/2-cyOff*H,R=artS*H*(1+L.beat*.05+L.bass*.03),sp=theme=='spotify';
   const p0=pal[0],mx=Math.max(...p0,.001);
   const acc=sp?p0.map(v=>Math.round(Math.min(1,v/mx)*255)).join(','):'255,255,255';
   x.lineCap='round';
@@ -1010,13 +1055,13 @@ function lyrSync(){
 }
 function lyrClear(){
   lyr=null;lyrLine=-2;lyrIn.textContent='';lyrIn.style.transform='';
-  lyrEl.hidden=true;$('lyrRow').hidden=true;
+  lyrEl.hidden=true;$('lyrRow').hidden=true;layout();
 }
 // a single status line in the lyric feed: searching, or nothing to show
 function lyrMsg(text){
   lyrIn.textContent='';
   const p=document.createElement('p');p.className='msg';p.textContent=text;lyrIn.appendChild(p);
-  lyrEl.hidden=false;
+  lyrEl.hidden=false;layout();
   lyrIn.style.transform=`translateY(${(lyrEl.clientHeight-p.offsetHeight)/2}px)`;
 }
 async function lyricsRefresh(){
@@ -1044,7 +1089,7 @@ async function lyricsRefresh(){
   lyrIn.textContent='';lyrIn.style.transform='';
   for(const l of hit.lines){const p=document.createElement('p');p.textContent=l.text||'♪';lyrIn.appendChild(p)}
   lyr=hit.lines;lyrOff=lyrOffs[key]||0;
-  lyrEl.hidden=false;$('lyrRow').hidden=false;
+  lyrEl.hidden=false;$('lyrRow').hidden=false;layout();
   const gap=meta.duration&&hit.dur?meta.duration-hit.dur:0;
   if(Math.abs(gap)>3&&!lyrOffs[key])toast(`This version is ${Math.round(Math.abs(gap))}s ${gap>0?'longer':'shorter'} than the lyrics. Tap Sync lyrics as a line starts to line them up`);
 }
@@ -1079,7 +1124,7 @@ function setLyrics(m,quiet){
   const was=lyrMode;
   lyrMode=m;
   const b=$('bLyr');b.classList.toggle('on',m>0);b.textContent=m==2?'Lyrics+':'Lyrics';
-  lyrEl.classList.toggle('hl',m==2);
+  lyrEl.classList.toggle('hl',m==2);layout();
   save('pulse-lyrics',m||'');
   lyrLine=-2;
   if(!m||!was){lyrKey='\0';lyrWait=0}
@@ -1129,7 +1174,7 @@ function secretBeat(){
 function drawStamp(){
   if(!secret)return;
   // clean caption sitting flush inside the artwork's bottom-left corner (centred on the Spotify disc)
-  const sp=theme=='spotify',cx=W/2,cy=H/2-cyOff*H,R=artS*H*(1+L.beat*.05+L.bass*.03);
+  const sp=theme=='spotify',cx=W/2+cxOff*H,cy=H/2-cyOff*H,R=artS*H*(1+L.beat*.05+L.bass*.03);
   const word=[...'BEAN'],s=R*.3,gap=s*.14,o=dpr*(1+L.beat*3);
   x.save();
   x.font=`800 ${s}px system-ui,-apple-system,"Segoe UI",sans-serif`;x.textAlign='left';x.textBaseline='alphabetic';
@@ -1209,10 +1254,16 @@ function setFaces(on){
 // ---------- main loop ----------
 let last=0,hadArt=false;
 function step(ms){
-  const now=ms/1000,dt=Math.min(.05,now-last);last=now;
+  const now=ms/1000,raw=now-last,dt=Math.min(.05,raw);last=now;
+  // if frames keep arriving late, render at a lower resolution: slightly softer, but smooth
+  if(raw<.25){
+    slowAvg+=(raw-slowAvg)*.05;
+    if(slowAvg>.026&&qual>.5&&now-qualAt>3){qual-=.25;qualAt=now;slowAvg=.016;resize()}
+  }
   analyse(dt,now);
 
   themeF+=((theme=='spotify'?1:0)-themeF)*Math.min(1,dt*6);
+  artS+=(artT-artS)*Math.min(1,dt*6);cyOff+=(cyT-cyOff)*Math.min(1,dt*6);cxOff+=(cxT-cxOff)*Math.min(1,dt*6);
   rot=(rot+dt*(.12+L.mid*.5))%(Math.PI*2);
   // scenes move faster with the music; switching dips through black to hide the cut
   flow+=dt*(.35+L.bass*1.5+L.beat*.6);
@@ -1233,7 +1284,7 @@ function step(ms){
   gl.uniform1f(U.uBass,L.bass);gl.uniform1f(U.uMid,L.mid);gl.uniform1f(U.uTreb,L.treb);gl.uniform1f(U.uBeat,L.beat);
   gl.uniform1f(U.uTheme,themeF);gl.uniform1f(U.uMix,S?(bfade?bmix:0):fading?mixF*mixF*(3-2*mixF):0);gl.uniform1f(U.uHas,has?1:0);
   gl.uniform1f(U.uAspA,has?A.asp:1);gl.uniform1f(U.uAspB,has?B.asp:1);
-  gl.uniform1f(U.uArt,artS);gl.uniform1f(U.uCy,cyOff);
+  gl.uniform1f(U.uArt,artS);gl.uniform1f(U.uCy,cyOff);gl.uniform1f(U.uCx,cxOff);
   gl.uniform1f(U.uBg,S?9:bg);gl.uniform1f(U.uVar,bvar);gl.uniform1f(U.uWarp,warp);gl.uniform1f(U.uFlow,flow);gl.uniform1f(U.uDip,dip);gl.uniform1f(U.uRot,rot*themeF);
   gl.uniform3fv(U.uC1,pal[0]);gl.uniform3fv(U.uC2,pal[1]);gl.uniform3fv(U.uC3,pal[2]);
   gl.drawArrays(gl.TRIANGLES,0,3);
@@ -1351,8 +1402,9 @@ addEventListener('pointermove',e=>{
   const n=performance.now(),el=Math.max(8,n-ptr.t),cap=v=>Math.max(-2500,Math.min(2500,v));
   ptr.vx=cap((e.clientX-ptr.x)/el*1000);ptr.vy=cap((e.clientY-ptr.y)/el*1000);
   ptr.x=e.clientX;ptr.y=e.clientY;ptr.t=n;
-  if(e.pointerType=='mouse')wake();
+  if(e.pointerType=='mouse'&&n>hideLock)wake();
 });
+let hideLock=0;
 let downAt=null;
 addEventListener('pointerdown',e=>{
   if(ac&&ac.state!='running')ac.resume();
@@ -1364,7 +1416,7 @@ addEventListener('pointerup',e=>{
   const moved=Math.hypot(e.clientX-downAt[0],e.clientY-downAt[1]);downAt=null;
   if(moved>12)return;
   // tapping the visuals toggles the controls
-  if(!document.body.classList.contains('idle')){clearTimeout(idleT);document.body.classList.add('idle')}
+  if(!document.body.classList.contains('idle')){clearTimeout(idleT);document.body.classList.add('idle');hideLock=performance.now()+900}
   else wake();
 });
 addEventListener('keydown',e=>{
