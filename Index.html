@@ -66,7 +66,7 @@ button.icon svg{width:18px;height:18px;fill:currentColor;display:block}
 label{font-size:12px;color:var(--dim);display:flex;align-items:center;gap:6px;white-space:nowrap}
 input[type=range]{accent-color:var(--accent);height:4px;cursor:pointer}
 input[type=checkbox]{accent-color:var(--accent)}
-#sens{width:90px}
+#sens,#vol{width:90px}
 #seek{flex:1;min-width:120px}
 .time{font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums;min-width:30px;text-align:center}
 #track{font-size:13px;font-weight:600;max-width:200px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -109,7 +109,7 @@ input[type=checkbox]{accent-color:var(--accent)}
   .row{gap:6px}
   .row>button:not(.icon){flex:1;padding:8px 6px}
   .sp{display:none}
-  #sens{width:76px}
+  #sens,#vol{width:76px}
   .time{display:none}
   #track{max-width:100%;flex-basis:100%;text-align:center}
 }
@@ -148,6 +148,8 @@ body.drag::after{content:"Drop music & photos";position:fixed;inset:14px;z-index
     <span class="sp"></span>
     <label title="Tint everything with colors pulled from the current photo"><input type="checkbox" id="cColors" checked>Photo colors</label>
     <label>Intensity<input type="range" id="sens" min="0.4" max="2.5" step="0.05" value="1"></label>
+    <label>Volume<input type="range" id="vol" min="0" max="1" step="0.01" value="1"></label>
+    <button id="bBg" title="Change the background style (B)">Clouds</button>
     <button id="bFull" class="icon" title="Fullscreen (F)"><svg viewBox="0 0 24 24"><path d="M4 4h6v2H6v4H4zM14 4h6v6h-2V6h-4zM4 14h2v4h4v2H4zM18 14h2v6h-6v-2h4z"/></svg></button>
   </div>
   <div class="row" id="linkRow" hidden>
@@ -190,6 +192,8 @@ const L={bass:0,mid:0,treb:0,beat:0};
 const N=64,bars=new Float32Array(N);
 let pal=THEMES.apple.map(c=>c.slice());
 let rot=0,beats=0,lastBeat=0,lastSwitch=0;
+const BGS=['Clouds','Aurora','Liquid','Tunnel','Stars','Kaleido','Grid','Waves','Mosaic'];
+let bg=0,bgNext=0,dip=0,flow=0;
 const hist=[],rings=[],parts=[];
 
 // ---------- WebGL ----------
@@ -202,7 +206,7 @@ void main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);gl_Position=vec4(p*2.-
 const FS=`#version 300 es
 precision highp float;
 uniform vec2 uRes;
-uniform float uTime,uBass,uMid,uTreb,uBeat,uTheme,uMix,uHas,uAspA,uAspB,uArt,uRot,uCy;
+uniform float uTime,uBass,uMid,uTreb,uBeat,uTheme,uMix,uHas,uAspA,uAspB,uArt,uRot,uCy,uBg,uFlow,uDip;
 uniform vec3 uC1,uC2,uC3;
 uniform sampler2D uA,uB;
 out vec4 o;
@@ -213,11 +217,11 @@ float fbm(vec2 p){float a=.5,s=0.;for(int i=0;i<4;i++){s+=a*noise(p);p=p*2.03+17
 vec2 cover(vec2 uv,float ra,float ia){vec2 s=ra>ia?vec2(1.,ia/ra):vec2(ra/ia,1.);return (uv-.5)*s+.5;}
 vec3 photo(vec2 uv,float ra,float lod){
   return mix(textureLod(uA,cover(uv,ra,uAspA),lod).rgb,textureLod(uB,cover(uv,ra,uAspB),lod).rgb,uMix);}
-void main(){
-  vec2 uv=gl_FragCoord.xy/uRes;float asp=uRes.x/uRes.y;vec2 p=(uv-.5)*vec2(asp,1.);
-  float t=uTime*.07;
+vec3 pal(float x){x=clamp(x,0.,1.);return x<.5?mix(uC1,uC2,x*2.):mix(uC2,uC3,x*2.-1.);}
 
-  // flowing background: palette blobs warped by bass, blended with a blurred copy of the photo
+// ---- background scenes: each returns the colour behind the artwork ----
+// 0 clouds: palette blobs warped by bass, blended with a blurred copy of the photo
+vec3 clouds(vec2 uv,vec2 p,float asp,float t){
   vec2 w=p*1.15;vec2 d=vec2(fbm(w+t),fbm(w-t+7.3))-.5;w+=d*(.9+uBass*1.2);
   float n1=fbm(w*1.2+t*1.3),n2=fbm(w*.9-t+3.1);
   vec3 col=mix(uC1,uC2,smoothstep(.3,.7,n1));
@@ -225,8 +229,124 @@ void main(){
   col=mix(col,photo(uv+d*(.12+uBass*.1),asp,5.5),uHas*.5);
   vec3 ap=col*(.62+.3*uBass+.12*uBeat);
   vec3 sp=mix(vec3(.07),col*.85,clamp(pow(uv.y,1.4)*.8+uBass*.15+uBeat*.08,0.,1.));
-  col=mix(ap,sp,uTheme);
-  col*=1.-.3*dot(p,p);
+  return mix(ap,sp,uTheme);
+}
+// 1 aurora: ribbons of light that flare on the beat
+vec3 aurora(vec2 p,float t){
+  vec3 c=mix(vec3(.02,.02,.05),uC2*.18,p.y+.5);
+  for(int i=0;i<4;i++){
+    float fi=float(i);
+    float y=.22*sin(p.x*(1.3+fi*.4)+t*(6.+fi*2.)+fi*1.7)+.14*fbm(vec2(p.x*1.5+fi*3.,t*4.+fi))-.3+fi*.13;
+    float d=p.y-y;
+    float g=exp(-abs(d)*(d>0.?5.:22.))*(.5+uBass*.9+uBeat*.5);
+    g*=.6+.4*noise(vec2(p.x*14.+fi*5.,t*10.));
+    c+=pal(fi/3.)*g*.6;
+  }
+  return c;
+}
+// 2 liquid: the photo melts and swirls, stirred by the bass
+vec3 liquid(vec2 uv,vec2 p,float asp,float t){
+  vec2 q=p*1.4;
+  vec2 w1=vec2(fbm(q+t*2.),fbm(q+5.2-t*2.));
+  vec2 w2=vec2(fbm(q+3.*w1+1.7+t),fbm(q+3.*w1+9.2-t));
+  vec3 c=pal(w2.x*1.4-.2);
+  if(uHas>.5)c=mix(photo(uv+(w2-.5)*(.25+uBass*.35),asp,2.),pal(w2.y*1.3-.15),.22);
+  return c*(.7+.7*length(w2-.5)+uBeat*.15);
+}
+// 3 tunnel: rings and spokes rushing past, faster with the music
+vec3 tunnel(vec2 p){
+  float r=length(p)+1e-3,a=atan(p.y,p.x);
+  float z=.3/r+uFlow*.6;
+  float rings=smoothstep(.72,1.,sin(z*12.)*.5+.5);
+  float spokes=smoothstep(.82,1.,sin(a*8.+z*1.5)*.5+.5);
+  vec3 c=pal(fract(z*.15))*max(rings,spokes*.6)*(.45+uBass);
+  c+=pal(fract(z*.15+.3))*.1;
+  c*=smoothstep(0.,.45,r);
+  return c+uC1*exp(-r*7.)*(.4+uBeat*1.2);
+}
+// 4 stars: flying through a starfield
+vec3 stars(vec2 p){
+  vec3 c=mix(vec3(.01,.01,.03),uC2*.12,length(p));
+  for(int i=0;i<5;i++){
+    float fi=float(i);
+    float z=fract(uFlow*.1+fi/5.);
+    vec2 g=p*mix(20.,.8,z)+fi*17.3;
+    vec2 id=floor(g),f=fract(g)-.5;
+    float h=hash(id+fi);
+    float d=length(f-(vec2(hash(id+3.1),hash(id+7.7))-.5)*.7);
+    float s=smoothstep(.05+.05*h,0.,d)*step(.5,h);
+    c+=mix(vec3(1.),pal(h),.5)*s*smoothstep(0.,.15,z)*smoothstep(1.,.7,z)*(.8+uTreb+uBeat);
+  }
+  return c;
+}
+// 5 kaleidoscope: the photo mirrored into a turning pattern
+vec3 kalei(vec2 p,float t){
+  float r=length(p),a=atan(p.y,p.x)+t*1.5+uFlow*.04,n=6.;
+  a=abs(mod(a,6.2832/n)-3.1416/n);
+  vec2 q=vec2(cos(a),sin(a))*r*(1.2+.25*sin(t*3.)+uBass*.25)+vec2(t*.8,t*.5);
+  vec3 c=pal(fbm(q*3.)*1.3-.1)*(.4+.9*fbm(q*5.+t));
+  if(uHas>.5)c=photo(abs(fract(q*.8)*2.-1.),1.,1.);
+  return c*(.7+uBeat*.3);
+}
+// 6 grid: neon horizon with a floor that ripples with the bass
+vec3 grid(vec2 p){
+  float hor=.02;
+  vec3 glow=pal(.9)*(.5+uBass);
+  if(p.y>hor){
+    float h=p.y-hor;
+    return mix(uC1*.5,uC2*.1,smoothstep(0.,.5,h))+glow*exp(-h*9.);
+  }
+  float d=hor-p.y,z=.25/d,x=p.x*z;
+  float gx=abs(fract(x*1.5)-.5),gz=abs(fract(z*1.2+uFlow*.8)-.5);
+  float line=max(smoothstep(fwidth(x*1.5)*1.2+.01,0.,gx),smoothstep(fwidth(z*1.2)*1.2+.01,0.,gz));
+  float ripple=.7+uBass*sin(z*2.-uTime*6.)*.5+uBeat*.5;
+  return uC2*.06+pal(.15)*line*exp(-z*.12)*ripple*1.2+glow*exp(-d*9.);
+}
+// 7 waves: layered flowing lines, taller with the bass
+vec3 waves(vec2 p){
+  vec3 c=mix(uC2*.1,uC3*.16,p.y+.5);
+  for(int i=0;i<7;i++){
+    float fi=float(i)/6.;
+    float amp=(.05+.1*fi)*(.5+uBass*1.2+uMid*.4);
+    float y=(fi-.5)*.7+amp*sin(p.x*(2.+fi*3.)+uTime*(.6+fi*.8)+fi*6.)+amp*.5*sin(p.x*(5.+fi*2.)-uTime*.9);
+    float d=abs(p.y-y);
+    c+=pal(fi)*(.004/(d+.004)*.5+exp(-d*30.)*.25)*(.6+uBeat*.6);
+  }
+  return c;
+}
+// 8 mosaic: drifting tiles of the photo that pulse on the beat
+vec3 mosaic(vec2 p,float t){
+  vec2 g=p*2.6+vec2(t*1.2,sin(t*2.)*.2);
+  g.y+=floor(g.x)*.37;
+  vec2 id=floor(g),f=fract(g);
+  float h=hash(id);
+  float s=.42+.05*sin(uTime*(.5+h)+h*6.)+uBeat*.05*h+uBass*.03;
+  vec2 q=(f-.5)/s;
+  float d=length(max(abs(q)-.75,0.))-.25;
+  vec3 tile=pal(h);
+  if(uHas>.5)tile=photo(q*.5+.5,1.,1.5);
+  tile*=.35+.5*h+uBeat*.25*step(.5,h);
+  return mix(vec3(.03)+pal(h)*.03,tile,smoothstep(.03,-.03,d));
+}
+void main(){
+  vec2 uv=gl_FragCoord.xy/uRes;float asp=uRes.x/uRes.y;vec2 p=(uv-.5)*vec2(asp,1.);
+  float t=uTime*.07;
+
+  int bg=int(uBg+.5);
+  vec3 col;
+  if(bg==0)col=clouds(uv,p,asp,t);
+  else{
+    if(bg==1)col=aurora(p,t);
+    else if(bg==2)col=liquid(uv,p,asp,t);
+    else if(bg==3)col=tunnel(p);
+    else if(bg==4)col=stars(p);
+    else if(bg==5)col=kalei(p,t);
+    else if(bg==6)col=grid(p);
+    else if(bg==7)col=waves(p);
+    else col=mosaic(p,t);
+    col=mix(col,mix(vec3(.07),col,.85),uTheme);
+  }
+  col*=(1.-.3*dot(p,p))*(1.-uDip);
 
   // artwork: rounded square (Apple) morphing to a spinning disc (Spotify)
   float s=uArt*(1.+uBeat*.05+uBass*.03);
@@ -259,7 +379,7 @@ function initGL(){
   gl.linkProgram(pr);
   if(!gl.getProgramParameter(pr,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(pr));
   gl.useProgram(pr);
-  for(const n of ['uRes','uTime','uBass','uMid','uTreb','uBeat','uTheme','uMix','uHas','uAspA','uAspB','uArt','uRot','uCy','uC1','uC2','uC3','uA','uB'])
+  for(const n of ['uRes','uTime','uBass','uMid','uTreb','uBeat','uTheme','uMix','uHas','uAspA','uAspB','uArt','uRot','uCy','uBg','uFlow','uDip','uC1','uC2','uC3','uA','uB'])
     U[n]=gl.getUniformLocation(pr,n);
   gl.uniform1i(U.uA,0);gl.uniform1i(U.uB,1);
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
@@ -354,7 +474,7 @@ function markThumb(){
 }
 
 // ---------- audio ----------
-let ac,an,freq,bt,fl,prevE=0,liveStream,liveSrc,demo=null;
+let ac,an,freq,bt,fl,prevE=0,liveStream,liveSrc,demo=null,out,vol=1;
 let musicOn=false,loudT=0,quietT=0,armed=false;
 const HINT='Drop music and photos anywhere, or hit Demo';
 const isLive=()=>mode=='mic'||mode=='stream';
@@ -368,7 +488,8 @@ function ensureAudio(){
   freq=new Uint8Array(an.frequencyBinCount);
   bt=ac.createAnalyser();bt.fftSize=1024;bt.smoothingTimeConstant=0;
   fl=new Float32Array(bt.frequencyBinCount);an.connect(bt);
-  const el=ac.createMediaElementSource(audio);el.connect(an);el.connect(ac.destination);
+  out=ac.createGain();out.gain.value=vol;out.connect(ac.destination);
+  const el=ac.createMediaElementSource(audio);el.connect(an);el.connect(out);
 }
 function stopOthers(keep){
   if(keep!='file')audio.pause();
@@ -563,7 +684,7 @@ function openYT(id){
   f.allow='autoplay; encrypted-media; picture-in-picture';f.referrerPolicy='strict-origin-when-cross-origin';
   f.title='YouTube player';
   f.src=`${YT}/embed/${id}?autoplay=1&playsinline=1&enablejsapi=1&rel=0`;
-  f.onload=()=>f.contentWindow.postMessage(JSON.stringify({event:'listening',id:1,channel:'widget'}),YT);
+  f.onload=()=>{f.contentWindow.postMessage(JSON.stringify({event:'listening',id:1,channel:'widget'}),YT);setTimeout(()=>{if(ext&&ext.el===f)setVol(vol)},1500)};
   $('extBox').appendChild(f);showExt();
   ext={kind:'yt',id,el:f,title:'YouTube',playing:true};
   if(!isLive())setMode('idle');else setMode(mode);
@@ -575,7 +696,7 @@ function openYT(id){
 }
 function openRaw(t){
   dropExt();
-  const a=new Audio(t.url);
+  const a=new Audio(t.url);a.volume=vol;
   ext={kind:'raw',a,title:t.name,playing:true};
   a.onplay=a.onpause=()=>{if(ext&&ext.a===a){ext.playing=!a.paused;syncPlay()}};
   a.onended=closeExt;
@@ -603,7 +724,7 @@ addEventListener('message',e=>{
 function toggleDemo(){
   if(mode=='demo'){stopOthers('none');setMode('idle');return}
   closeExt();sess('playback');ensureAudio();stopOthers('none');
-  const bus=ac.createGain();bus.gain.value=.7;bus.connect(an);bus.connect(ac.destination);
+  const bus=ac.createGain();bus.gain.value=.7;bus.connect(an);bus.connect(out);
   const nb=ac.createBuffer(1,ac.sampleRate*.3,ac.sampleRate),nd=nb.getChannelData(0);
   for(let i=0;i<nd.length;i++)nd[i]=Math.random()*2-1;
   const tone=(type,f,t,dur,g,f2)=>{
@@ -733,6 +854,9 @@ function step(ms){
 
   themeF+=((theme=='spotify'?1:0)-themeF)*Math.min(1,dt*6);
   rot=(rot+dt*(.12+L.mid*.5))%(Math.PI*2);
+  // scenes move faster with the music; switching dips through black to hide the cut
+  flow+=dt*(.35+L.bass*1.5+L.beat*.6);
+  if(bgNext!=bg){dip=Math.min(1,dip+dt*6);if(dip>=1)bg=bgNext}else dip=Math.max(0,dip-dt*4);
   if(fading){mixF+=dt/.7;if(mixF>=1){cur=nxt;fading=false;mixF=0}}
   const has=photos.length>0,A=has?photos[cur]:null,B=has?photos[fading?nxt:cur]:null;
   const target=has&&usePhotoColors?B.pal:THEMES[theme],k=Math.min(1,dt*3);
@@ -744,7 +868,8 @@ function step(ms){
   gl.uniform1f(U.uBass,L.bass);gl.uniform1f(U.uMid,L.mid);gl.uniform1f(U.uTreb,L.treb);gl.uniform1f(U.uBeat,L.beat);
   gl.uniform1f(U.uTheme,themeF);gl.uniform1f(U.uMix,fading?mixF*mixF*(3-2*mixF):0);gl.uniform1f(U.uHas,has?1:0);
   gl.uniform1f(U.uAspA,has?A.asp:1);gl.uniform1f(U.uAspB,has?B.asp:1);
-  gl.uniform1f(U.uArt,artS);gl.uniform1f(U.uCy,cyOff);gl.uniform1f(U.uRot,rot*themeF);
+  gl.uniform1f(U.uArt,artS);gl.uniform1f(U.uCy,cyOff);
+  gl.uniform1f(U.uBg,bg);gl.uniform1f(U.uFlow,flow);gl.uniform1f(U.uDip,dip);gl.uniform1f(U.uRot,rot*themeF);
   gl.uniform3fv(U.uC1,pal[0]);gl.uniform3fv(U.uC2,pal[1]);gl.uniform3fv(U.uC3,pal[2]);
   gl.drawArrays(gl.TRIANGLES,0,3);
 
@@ -757,6 +882,21 @@ function frame(ms){
 }
 
 // ---------- UI ----------
+function setBg(i,quiet){
+  bgNext=(i%BGS.length+BGS.length)%BGS.length;
+  $('bBg').textContent=BGS[bgNext];
+  save('pulse-bg',bgNext);
+  if(!quiet)toast('Background: '+BGS[bgNext]);
+}
+// file and demo sound go through our own gain; a YouTube or plain-link player has to be asked instead
+// (iOS ignores that request: there only the phone's volume buttons change a video's loudness)
+function setVol(v){
+  vol=Math.max(0,Math.min(1,v));
+  if(out)out.gain.value=vol;
+  if(ext&&ext.kind=='yt')ext.el.contentWindow.postMessage(JSON.stringify({event:'command',func:'setVolume',args:[Math.round(vol*100)]}),YT);
+  if(ext&&ext.a)ext.a.volume=vol;
+  save('pulse-vol',vol);
+}
 function setTheme(t){
   theme=t;document.documentElement.dataset.skin=t;
   [...$('themeSeg').children].forEach(b=>b.classList.toggle('on',b.dataset.t==t));
@@ -792,11 +932,14 @@ $('bGo').onclick=loadLink;
 $('linkIn').onkeydown=e=>{if(e.key=='Enter')loadLink()};
 $('bExtX').onclick=closeExt;
 $('bSync').onclick=resync;
+$('bBg').onclick=()=>setBg(bgNext+1);
 $('bPlay').onclick=togglePlay;
 $('bPrev').onclick=()=>playTrack(ti-1);
 $('bNext').onclick=()=>playTrack(ti+1);
 $('bFull').onclick=toggleFull;
 $('sens').oninput=e=>sens=+e.target.value;
+$('vol').oninput=e=>setVol(+e.target.value);
+try{const sv=localStorage.getItem('pulse-vol');if(sv!=null&&sv!==''){vol=Math.max(0,Math.min(1,+sv||0));$('vol').value=vol}}catch{}
 $('cColors').onchange=e=>usePhotoColors=e.target.checked;
 let seeking=false;
 $('seek').oninput=()=>seeking=true;
@@ -827,6 +970,7 @@ addEventListener('keydown',e=>{
   if(e.code=='Space'){e.preventDefault();togglePlay()}
   else if(e.key=='f'||e.key=='F')toggleFull();
   else if(e.key=='t'||e.key=='T')setTheme(theme=='apple'?'spotify':'apple');
+  else if(e.key=='b'||e.key=='B')setBg(bgNext+1);
   else if(e.key=='ArrowRight')gotoPhoto((fading?nxt:cur)+1);
   else if(e.key=='ArrowLeft')gotoPhoto((fading?nxt:cur)-1);
 });
@@ -845,6 +989,8 @@ else{
   initGL();resize();
   let saved='apple';try{saved=localStorage.getItem('pulse-theme')||'apple'}catch{}
   setTheme(saved);themeF=saved=='spotify'?1:0;pal=THEMES[saved].map(c=>c.slice());
+  let sb=0;try{sb=+localStorage.getItem('pulse-bg')||0}catch{}
+  setBg(sb,true);bg=bgNext;
   syncPlay();requestAnimationFrame(frame);
 
   // if the mic was on last time, start listening again without being asked
