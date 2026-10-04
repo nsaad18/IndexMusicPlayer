@@ -74,6 +74,12 @@ input[type=checkbox]{accent-color:var(--accent)}
 .time{font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums;min-width:30px;text-align:center}
 #track{font-size:13px;font-weight:600;max-width:200px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
+#lyr{position:fixed;left:0;right:0;z-index:1;height:6.4em;font-size:clamp(17px,2.6vw,24px);overflow:hidden;pointer-events:none;text-align:center;
+  -webkit-mask-image:linear-gradient(transparent,#000 28%,#000 72%,transparent);mask-image:linear-gradient(transparent,#000 28%,#000 72%,transparent)}
+#lyrIn{max-width:760px;margin:0 auto;padding:0 24px;will-change:transform;transition:transform .5s cubic-bezier(.2,.8,.2,1)}
+#lyrIn p{margin:0;padding:.28em 0;font-weight:700;line-height:1.25;color:#fff;opacity:.3;transform:scale(.86);
+  transition:opacity .4s,transform .3s;text-shadow:0 2px 14px rgba(0,0,0,.6);text-wrap:balance}
+#lyrIn p.on{opacity:1;transform:scale(calc(1 + var(--beat,0)*.03))}
 #linkIn{flex:1;min-width:0;font:inherit;font-size:16px;color:var(--text);background:rgba(255,255,255,.1);
   border:1px solid var(--panel-border);border-radius:var(--btn-radius);padding:8px 12px;outline:none;
   -webkit-user-select:text;user-select:text}
@@ -123,6 +129,7 @@ body.drag::after{content:"Drop music & photos";position:fixed;inset:14px;z-index
 <body>
 <canvas id="gl"></canvas>
 <canvas id="fx"></canvas>
+<div id="lyr" hidden><div id="lyrIn"></div></div>
 
 <header class="ui top">
   <div class="brand" aria-label="Power">P<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.2 5.8A8.3 8.3 0 1 0 16.8 5.800M12 2.200V11"/></svg>WER</div>
@@ -152,6 +159,7 @@ body.drag::after{content:"Drop music & photos";position:fixed;inset:14px;z-index
     <label title="Tint everything with colors pulled from the current photo"><input type="checkbox" id="cColors" checked>Photo colors</label>
     <label>Intensity<input type="range" id="sens" min="0.4" max="2.5" step="0.05" value="1"></label>
     <label>Volume<input type="range" id="vol" min="0" max="1" step="0.01" value="1"></label>
+    <button id="bLyr" title="Show live lyrics for the current song">Lyrics</button>
     <button id="bBg" title="Change the background style (B)">Clouds</button>
     <button id="bFull" class="icon" title="Fullscreen (F)"><svg viewBox="0 0 24 24"><path d="M4 4h6v2H6v4H4zM14 4h6v6h-2V6h-4zM4 14h2v4h4v2H4zM18 14h2v6h-6v-2h4z"/></svg></button>
   </div>
@@ -408,6 +416,7 @@ function resize(){
   gl.viewport(0,0,W,H);
   artS=Math.min(.22,.36*W/H);
   cyOff=W/H<.8?.15:.06; // portrait: lift the artwork clear of the taller dock
+  lyrEl.style.top=(innerHeight*(.5-cyOff)+artS*innerHeight*1.58)+'px';
 }
 
 // ---------- photos ----------
@@ -510,7 +519,7 @@ function setMode(m){
   if(isLive())$('track').textContent=ext?ext.title:'Waiting for music…';
   if(m=='demo')$('track').textContent='Demo beat';
   if(m=='idle')$('track').textContent=ext?ext.title:playlist.length?playlist[ti].name:'No track';
-  syncPlay();updateHint();wake();
+  syncPlay();updateHint();wake();lyricsRefresh();
 }
 function syncPlay(){$('bPlay').innerHTML=(ext?ext.playing:(mode=='file'&&!audio.paused)||mode=='demo')?ICON.pause:ICON.play}
 function updateHint(){
@@ -562,8 +571,9 @@ async function readTags(file,tr){
   lib.read(file,{onError(){},async onSuccess({tags}){
     const current=()=>mode=='file'&&playlist[ti]===tr;
     if(tags.title){
+      tr.title=tags.title;tr.artist=tags.artist||'';
       tr.name=tags.artist?tags.artist+' - '+tags.title:tags.title;
-      if(current())$('track').textContent=tr.name;
+      if(current()){$('track').textContent=tr.name;lyricsRefresh()}
     }
     const p=tags.picture;
     if(!p||!p.data)return;
@@ -735,7 +745,7 @@ function openYT(id){
   ext={kind:'yt',id,el:f,title:'YouTube',playing:true};
   if(!isLive())setMode('idle');else setMode(mode);
   fetch(`${YT}/oembed?format=json&url=`+encodeURIComponent(`${YT}/watch?v=${id}`)).then(r=>r.json())
-    .then(j=>{if(ext&&ext.el===f&&j.title){ext.title=j.title;$('track').textContent=j.title}}).catch(()=>{});
+    .then(j=>{if(ext&&ext.el===f&&j.title){ext.title=j.title;ext.author=j.author_name||'';$('track').textContent=j.title;lyricsRefresh()}}).catch(()=>{});
   // video thumbnail becomes the artwork; maxres is a 120px placeholder when the video has none
   loadThumb(id);
   startSync();
@@ -763,7 +773,13 @@ function loadLink(){
 }
 addEventListener('message',e=>{
   if(e.origin!=YT||!ext||ext.kind!='yt')return;
-  try{const s=JSON.parse(e.data).info.playerState;if(s!=null){ext.playing=s==1||s==3;syncPlay()}}catch{}
+  try{
+    const info=JSON.parse(e.data).info;
+    if(!info)return;
+    if(info.playerState!=null){ext.playing=info.playerState==1||info.playerState==3;syncPlay()}
+    if(info.currentTime!=null){ext.t=info.currentTime;ext.tAt=performance.now()}
+    if(info.duration)ext.dur=info.duration;
+  }catch{}
 });
 
 // ---------- your own Demo song ----------
@@ -935,6 +951,99 @@ function drawFx(dt){
   }
 }
 
+// ---------- lyrics ----------
+// time-synced lyrics for the current song, looked up by artist and title on lrclib.net
+const lyrEl=$('lyr'),lyrIn=$('lyrIn');
+let lyricsOn=false,lyr=null,lyrKey='',lyrLine=-2,lyrReq=0;
+const cleanTitle=s=>s.replace(/\([^)]*\)|\[[^\]]*\]/g,' ')
+  .replace(/\b(official|music video|video|audio|lyrics?|hd|hq|4k|remaster(ed)?|visuali[sz]er)\b/gi,' ')
+  .replace(/["“”]/g,'').replace(/\s+/g,' ').trim();
+function songMeta(){
+  let raw='',artist='',duration=0;
+  if(ext&&ext.kind=='yt'){
+    if(ext.title=='YouTube')return null;
+    raw=ext.title;duration=ext.dur||0;
+    const au=ext.author||'';artist=au.replace(/ - Topic$|VEVO$/i,'').trim();
+    if(/ - Topic$/.test(au))return{artist,title:cleanTitle(raw),duration};
+  }else if(ext){raw=ext.title}
+  else if(mode=='file'&&playlist[ti]){
+    const tr=playlist[ti];duration=audio.duration||0;
+    if(tr.title)return{artist:tr.artist||'',title:tr.title,duration};
+    raw=tr.name;
+  }
+  if(!raw)return null;
+  const by=raw.match(/^["“](.+?)["”]\s+by\s+(.+?)(\s+[-–—]\s+|$)/i);
+  if(by)return{title:cleanTitle(by[1]),artist:cleanTitle(by[2]),duration};
+  const parts=raw.split(/\s+[-–—]\s+/);
+  if(parts.length>1)return{artist:cleanTitle(parts[0]),title:cleanTitle(parts[1]),duration};
+  return{artist,title:cleanTitle(raw),duration};
+}
+function parseLRC(s){
+  const out=[];
+  for(const ln of s.split(/\r?\n/)){
+    const text=ln.replace(/\[[^\]]*\]/g,'').trim();
+    for(const m of ln.matchAll(/\[(\d+):(\d+(?:\.\d+)?)\]/g))out.push({t:+m[1]*60+ +m[2],text});
+  }
+  return out.sort((a,b)=>a.t-b.t);
+}
+async function findLyrics(meta){
+  // prefer the version whose length matches the song that is playing
+  const pick=list=>{
+    let best=null,bs=-1;
+    for(const it of Array.isArray(list)?list:[]){
+      if(!it.syncedLyrics)continue;
+      let s=1;if(meta.duration&&it.duration)s+=Math.max(0,6-Math.abs(it.duration-meta.duration));
+      if(s>bs){bs=s;best=it}
+    }
+    return best;
+  };
+  const get=async p=>{const r=await fetch('https://lrclib.net/api/search?'+new URLSearchParams(p));return r.ok?r.json():[]};
+  let hit=pick(await get(meta.artist?{track_name:meta.title,artist_name:meta.artist}:{track_name:meta.title}));
+  if(!hit)hit=pick(await get({q:(meta.artist+' '+meta.title).trim()}));
+  return hit?parseLRC(hit.syncedLyrics):null;
+}
+async function lyricsRefresh(){
+  if(!lyricsOn){lyrEl.hidden=true;lyr=null;return}
+  const meta=songMeta(),key=meta&&meta.title?meta.artist+'|'+meta.title:'';
+  if(key==lyrKey)return;
+  lyrKey=key;lyr=null;lyrLine=-2;lyrIn.textContent='';lyrIn.style.transform='';lyrEl.hidden=true;
+  if(!key)return;
+  const req=++lyrReq;
+  let lines=null;
+  try{lines=await findLyrics(meta)}catch{}
+  if(req!=lyrReq)return;
+  if(!lines||!lines.length){toast('No synced lyrics found for this song');return}
+  for(const l of lines){const p=document.createElement('p');p.textContent=l.text||'♪';lyrIn.appendChild(p)}
+  lyr=lines;lyrEl.hidden=false;
+}
+function songTime(){
+  if(ext&&ext.kind=='yt')return ext.t==null?null:ext.t+(ext.playing?(performance.now()-ext.tAt)/1000:0);
+  if(ext&&ext.a)return ext.a.currentTime;
+  return mode=='file'?audio.currentTime:null;
+}
+function drawLyrics(){
+  if(!lyr||lyrEl.hidden)return;
+  const t=songTime();
+  if(t==null)return;
+  let i=-1;while(i+1<lyr.length&&lyr[i+1].t<=t+.2)i++;
+  lyrEl.style.setProperty('--beat',L.beat.toFixed(2));
+  if(i==lyrLine)return;
+  const ps=lyrIn.children;
+  if(lyrLine>=0&&ps[lyrLine])ps[lyrLine].classList.remove('on');
+  lyrLine=i;
+  const p=ps[Math.max(0,i)];
+  if(i>=0)p.classList.add('on');
+  // centre the current line; before the first line, park it one row below centre
+  const y=p.offsetTop+p.offsetHeight/2-lyrEl.clientHeight/2-(i<0?p.offsetHeight:0);
+  lyrIn.style.transform=`translateY(${-y}px)`;
+}
+function setLyrics(on,quiet){
+  lyricsOn=on;$('bLyr').classList.toggle('on',on);save('pulse-lyrics',on?'1':'');
+  lyrKey='\0';
+  if(on&&!quiet&&!songMeta())toast('Lyrics show for songs with a known title: your files or a YouTube link');
+  lyricsRefresh();
+}
+
 // ---------- main loop ----------
 let last=0;
 function step(ms){
@@ -963,6 +1072,7 @@ function step(ms){
   gl.drawArrays(gl.TRIANGLES,0,3);
 
   drawFx(dt);
+  drawLyrics();
 }
 let frameErr=false;
 function frame(ms){
@@ -1023,6 +1133,7 @@ $('linkIn').onkeydown=e=>{if(e.key=='Enter')loadLink()};
 $('bExtX').onclick=closeExt;
 $('bSync').onclick=resync;
 $('bBg').onclick=()=>setBg(bgNext+1);
+$('bLyr').onclick=()=>setLyrics(!lyricsOn);
 $('bPlay').onclick=togglePlay;
 $('bPrev').onclick=()=>playTrack(ti-1);
 $('bNext').onclick=()=>playTrack(ti+1);
@@ -1081,6 +1192,8 @@ else{
   setTheme(saved);themeF=saved=='spotify'?1:0;pal=THEMES[saved].map(c=>c.slice());
   let sb=0;try{sb=+localStorage.getItem('pulse-bg')||0}catch{}
   setBg(sb,true);bg=bgNext;
+  let sl='';try{sl=localStorage.getItem('pulse-lyrics')||''}catch{}
+  if(sl)setLyrics(true,true);
   syncPlay();requestAnimationFrame(frame);
 
   // if the mic was on last time, start listening again without being asked
