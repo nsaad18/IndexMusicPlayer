@@ -535,8 +535,47 @@ function detect(dt,lvl){
 const playlist=[];let ti=0;
 function addTracks(files){
   const first=playlist.length;
-  for(const f of files)playlist.push({name:f.name.replace(/\.[^.]+$/,''),url:URL.createObjectURL(f)});
+  for(const f of files){
+    const tr={name:f.name.replace(/\.[^.]+$/,''),url:URL.createObjectURL(f)};
+    playlist.push(tr);readTags(f,tr);
+  }
   if(playlist.length>first&&(mode!='file'||audio.paused))playTrack(first);
+}
+// cover art and title embedded in a music file (MP3, M4A, FLAC), read with jsmediatags loaded on first use
+let tagLib;
+function loadTags(){
+  return tagLib||(tagLib=new Promise(r=>{
+    const s=document.createElement('script');
+    s.src='https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js';
+    s.onload=()=>r(window.jsmediatags||null);s.onerror=()=>r(null);
+    document.head.appendChild(s);
+  }));
+}
+async function readTags(file,tr){
+  const lib=await loadTags();
+  if(!lib)return;
+  lib.read(file,{onError(){},async onSuccess({tags}){
+    const current=()=>mode=='file'&&playlist[ti]===tr;
+    if(tags.title){
+      tr.name=tags.artist?tags.artist+' - '+tags.title:tags.title;
+      if(current())$('track').textContent=tr.name;
+    }
+    const p=tags.picture;
+    if(!p||!p.data)return;
+    const url=URL.createObjectURL(new Blob([new Uint8Array(p.data)],{type:p.format||'image/jpeg'}));
+    const i=await addImage(url);
+    if(i<0){URL.revokeObjectURL(url);return}
+    photos[i].track=tr;
+    if(current())gotoPhoto(i);
+  }});
+}
+// automatic photo changes skip covers that belong to some other song or video
+function autoNext(){
+  const a=fading?nxt:cur,n=photos.length;
+  for(let k=1;k<n;k++){
+    const i=(a+k)%n,p=photos[i];
+    if(p.track?mode=='file'&&p.track===playlist[ti]:p.yt?ext&&ext.id===p.yt:true){gotoPhoto(i);return}
+  }
 }
 function playTrack(i){
   if(!playlist.length)return;
@@ -546,6 +585,8 @@ function playTrack(i){
   audio.src=t.url;
   $('track').textContent=t.name;
   setMode('file');
+  const art=photos.findIndex(p=>p.track===t);
+  if(art>=0)gotoPhoto(art);
   audio.play().catch(e=>{
     if(e.name=='AbortError'||e.name=='NotAllowedError')return;
     if(!t.remote){toast('Could not play that file');return}
@@ -790,7 +831,7 @@ function analyse(dt,now){
   prevE=e;
   L.beat*=Math.exp(-dt*5);
   // quiet tracks without clear beats still rotate through photos
-  if(photos.length>1&&mode!='idle'&&now-lastSwitch>15)gotoPhoto(cur+1);
+  if(photos.length>1&&mode!='idle'&&now-lastSwitch>15){lastSwitch=now;autoNext()}
 }
 function onBeat(){
   rings.push({r:1,a:1});
@@ -799,7 +840,7 @@ function onBeat(){
     const a=Math.random()*Math.PI*2,v=(sp?.6:.25)+Math.random()*(sp?1:.5);
     parts.push({a,d:1.08,v,life:1,size:(sp?1:2.2)*(.6+Math.random())});
   }
-  if(photos.length>1&&beats%8==0)gotoPhoto((fading?nxt:cur)+1);
+  if(photos.length>1&&beats%8==0)autoNext();
 }
 
 // ---------- overlay (spectrum, rings, particles) ----------
