@@ -285,7 +285,7 @@ const hist=[],rings=[],parts=[];
 const glc=$('gl'),gl=glc.getContext('webgl2',{antialias:false,alpha:false});
 const fxc=$('fx'),x=fxc.getContext('2d');
 glc.addEventListener('webglcontextlost',e=>e.preventDefault());
-glc.addEventListener('webglcontextrestored',()=>{initGL();resize();for(const p of photos)p.tex=makeTex(p.src);for(const p of bean)p.tex=makeTex(p.src)});
+glc.addEventListener('webglcontextrestored',()=>{initGL();resize();for(const p of photos)p.tex=makeTex(p.src);for(const p of bean)p.tex=makeTex(p.src);cap.tex=null});
 const VS=`#version 300 es
 void main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);gl_Position=vec4(p*2.-1.,0.,1.);}`;
 const FS=`#version 300 es
@@ -601,7 +601,7 @@ function ensureAudio(){
 }
 function stopOthers(keep){
   if(keep!='file')audio.pause();
-  if(keep!='live'&&liveStream){liveStream.getTracks().forEach(t=>t.stop());liveSrc.disconnect();liveStream=null}
+  if(keep!='live'&&liveStream){liveStream.getTracks().forEach(t=>t.stop());liveSrc.disconnect();liveStream=null;capStop()}
 }
 function setMode(m){
   mode=m;
@@ -704,6 +704,7 @@ const RAW={echoCancellation:false,noiseSuppression:false,autoGainControl:false};
 function goLive(st,m){
   ensureAudio();stopOthers('none');
   liveStream=st;liveSrc=ac.createMediaStreamSource(st);liveSrc.connect(an);
+  if(m=='stream'&&!ext)capStart(st);
   st.getAudioTracks()[0].onended=()=>{
     if(liveStream!==st)return;
     stopOthers('none');setMode('idle');
@@ -729,6 +730,7 @@ async function toggleStream(){
     const st=await navigator.mediaDevices.getDisplayMedia({video:true,audio:RAW,systemAudio:'include'});
     if(!st.getAudioTracks().length){st.getTracks().forEach(t=>t.stop());toast('No audio was shared. Tick "Share audio" in the picker');return}
     goLive(st,'stream');
+    toast('Sharing: the picture from that tab becomes the artwork');
   }catch{}
 }
 
@@ -807,7 +809,7 @@ let autoRetry=0,stallTold=false;
 async function resync(){
   autoRetry=0;stallTold=false;
   toast('Syncing…');
-  if(liveStream){liveStream.getTracks().forEach(t=>t.stop());try{liveSrc.disconnect()}catch{}liveStream=null}
+  if(liveStream){liveStream.getTracks().forEach(t=>t.stop());try{liveSrc.disconnect()}catch{}liveStream=null;capStop()}
   if(isLive())mode='idle';
   if(ac){try{await ac.resume()}catch{}}
   if(ext&&ext.kind=='yt')loadThumb(ext.id);
@@ -869,6 +871,84 @@ addEventListener('message',e=>{
   }catch{}
 });
 
+// ---------- stream picture ----------
+// when another tab or app is shared, its picture becomes the artwork: Power looks for the most
+// picture-like square on the shared screen (album art, a video) and shows that, live
+const cap={vid:null,tex:null,asp:1,pal:null,ready:false,crop:null,tCrop:0,tDraw:0,tPal:0,
+  cv:document.createElement('canvas'),sm:document.createElement('canvas')};
+cap.cv.width=cap.cv.height=512;
+function capStart(st){
+  capStop();
+  const vt=st.getVideoTracks()[0];
+  if(!vt)return;
+  const v=document.createElement('video');
+  v.muted=true;v.playsInline=true;v.srcObject=new MediaStream([vt]);v.play().catch(()=>{});
+  cap.vid=v;
+}
+function capStop(){
+  if(cap.vid){cap.vid.srcObject=null;cap.vid=null}
+  cap.ready=false;cap.crop=null;
+}
+// returns [x,y,size] in the shared picture's own pixels
+function findArt(v){
+  const gw=96,gh=Math.max(8,Math.round(96*v.videoHeight/v.videoWidth)),c=cap.sm;
+  c.width=gw;c.height=gh;
+  const g=c.getContext('2d',{willReadFrequently:true});
+  g.drawImage(v,0,0,gw,gh);
+  const d=g.getImageData(0,0,gw,gh).data,w1=gw+1,sum=new Float32Array(w1*(gh+1));
+  for(let y=0;y<gh;y++){
+    let row=0;
+    for(let x=0;x<gw;x++){
+      // colourful or textured pixels score high; flat page background scores near zero
+      const i=(y*gw+x)*4,r=d[i],gr=d[i+1],b=d[i+2];
+      let s=(Math.max(r,gr,b)-Math.min(r,gr,b))/255;
+      if(x>0){const j=i-4;s+=(Math.abs(r-d[j])+Math.abs(gr-d[j+1])+Math.abs(b-d[j+2]))/300}
+      if(y>0){const j=i-gw*4;s+=(Math.abs(r-d[j])+Math.abs(gr-d[j+1])+Math.abs(b-d[j+2]))/300}
+      row+=Math.min(1,s);
+      sum[(y+1)*w1+x+1]=sum[y*w1+x+1]+row;
+    }
+  }
+  // slide squares of several sizes over the frame and keep the densest one, leaning towards larger squares
+  const m=Math.min(gw,gh);
+  let best=[0,0,m],bv=-1;
+  for(const f of [.4,.55,.7,.85,1]){
+    const s=Math.max(4,Math.floor(m*f));
+    for(let y=0;y+s<=gh;y+=2)for(let x=0;x+s<=gw;x+=2){
+      const val=(sum[(y+s)*w1+x+s]-sum[y*w1+x+s]-sum[(y+s)*w1+x]+sum[y*w1+x])/(s*s)*Math.pow(f,.5);
+      if(val>bv){bv=val;best=[x,y,s]}
+    }
+  }
+  const k=v.videoWidth/gw;
+  return best.map(n=>n*k);
+}
+function capFrame(now){
+  const v=cap.vid;
+  if(!v||v.readyState<2||!v.videoWidth)return;
+  if(!cap.crop||now-cap.tCrop>2){
+    cap.tCrop=now;
+    // keep the old framing unless the picture really moved, so the artwork does not jitter
+    const c=findArt(v),o=cap.crop;
+    if(!o||Math.abs(c[0]-o[0])+Math.abs(c[1]-o[1])+Math.abs(c[2]-o[2])>o[2]*.12)cap.crop=c;
+  }
+  if(now-cap.tDraw<.066)return;
+  cap.tDraw=now;
+  const [sx,sy,ss]=cap.crop;
+  cap.cv.getContext('2d').drawImage(v,sx,sy,ss,ss,0,0,512,512);
+  const fresh=!cap.tex;
+  if(fresh)cap.tex=gl.createTexture();
+  gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,cap.tex);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,cap.cv);
+  gl.generateMipmap(gl.TEXTURE_2D);
+  if(fresh){
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  }
+  if(!cap.pal||now-cap.tPal>1){cap.tPal=now;cap.pal=extractPalette(cap.cv)}
+  cap.ready=true;
+}
+
 // ---------- analysis ----------
 const fluxH=[],gaps=[];let tempo=0,missed=0;
 function fire(s){L.beat=Math.max(L.beat,s);beats++;onBeat(s)}
@@ -883,7 +963,8 @@ function analyse(dt,now){
     const hz=ac.sampleRate/an.fftSize;
     const band=(lo,hi)=>{const a=Math.max(1,Math.round(lo/hz)),z=Math.round(hi/hz);let s=0;for(let i=a;i<=z;i++)s+=freq[i];return s/(z-a+1)/255};
     b=band(30,160)*sens;m=band(200,2000)*sens*1.2;tr=band(2500,9000)*sens*1.6;
-    detect(dt,band(200,4000));
+    // bass-heavy or sparse music counts as music too: a recent beat is proof enough
+    detect(dt,Math.max(band(200,4000),band(40,200)*.8,now-lastBeat<1?.2:0));
     for(let i=0;i<N;i++){
       const a=Math.max(1,Math.floor(40*Math.pow(2,i/N*8)/hz)),z=Math.max(a,Math.floor(40*Math.pow(2,(i+1)/N*8)/hz));
       let mx=0;for(let j=a;j<=z&&j<freq.length;j++)if(freq[j]>mx)mx=freq[j];
@@ -1274,7 +1355,10 @@ function step(ms){
   // fade between covers, but cut straight in when there was no art on screen
   if(w>=0){if(!hadArt){cur=nxt=w;fading=false;mixF=0}else if(w!=(fading?nxt:cur))gotoPhoto(w)}
   hadArt=w>=0;
-  const has=S||w>=0,A=S?bean[bi]:has?photos[cur]:null,B=S?bean[bfade?bn:bi]:has?photos[fading?nxt:cur]:null;
+  // a shared tab's picture takes the place of the artwork while streaming
+  if(mode=='stream'&&!ext)capFrame(now);
+  const C=!S&&mode=='stream'&&!ext&&cap.ready?cap:null;
+  const has=S||!!C||w>=0,A=S?bean[bi]:C||(has?photos[cur]:null),B=S?bean[bfade?bn:bi]:C||(has?photos[fading?nxt:cur]:null);
   const target=has&&(usePhotoColors||S)?B.pal:THEMES[theme],k=Math.min(1,dt*3);
   for(let i=0;i<3;i++)for(let j=0;j<3;j++)pal[i][j]+=(target[i][j]-pal[i][j])*k;
 
@@ -1282,7 +1366,7 @@ function step(ms){
   gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,has?B.tex:blankTex);
   gl.uniform2f(U.uRes,W,H);gl.uniform1f(U.uTime,now);
   gl.uniform1f(U.uBass,L.bass);gl.uniform1f(U.uMid,L.mid);gl.uniform1f(U.uTreb,L.treb);gl.uniform1f(U.uBeat,L.beat);
-  gl.uniform1f(U.uTheme,themeF);gl.uniform1f(U.uMix,S?(bfade?bmix:0):fading?mixF*mixF*(3-2*mixF):0);gl.uniform1f(U.uHas,has?1:0);
+  gl.uniform1f(U.uTheme,themeF);gl.uniform1f(U.uMix,S?(bfade?bmix:0):C?0:fading?mixF*mixF*(3-2*mixF):0);gl.uniform1f(U.uHas,has?1:0);
   gl.uniform1f(U.uAspA,has?A.asp:1);gl.uniform1f(U.uAspB,has?B.asp:1);
   gl.uniform1f(U.uArt,artS);gl.uniform1f(U.uCy,cyOff);gl.uniform1f(U.uCx,cxOff);
   gl.uniform1f(U.uBg,S?9:bg);gl.uniform1f(U.uVar,bvar);gl.uniform1f(U.uWarp,warp);gl.uniform1f(U.uFlow,flow);gl.uniform1f(U.uDip,dip);gl.uniform1f(U.uRot,rot*themeF);
