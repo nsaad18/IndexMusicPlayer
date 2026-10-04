@@ -2,7 +2,8 @@
 <html lang="en" data-skin="apple">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'unsafe-inline'; img-src data: blob: https://i.ytimg.com; media-src blob: https: http:; connect-src https://lrclib.net https://www.youtube.com; frame-src https://www.youtube.com; base-uri 'none'; form-action 'none'">
+<meta name="version" content="2026.10.04-4">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'unsafe-inline'; img-src data: blob: https://i.ytimg.com; media-src blob: https: http:; connect-src 'self' https://lrclib.net https://www.youtube.com; frame-src https://www.youtube.com; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -80,6 +81,7 @@ button.icon svg{width:18px;height:18px;fill:currentColor;display:block}
 #more{display:grid;gap:10px}
 .sliders{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px}
 .sliders label{min-width:0}
+.ver{font-size:11px;color:var(--dim);text-align:right}
 .sliders input{flex:1;min-width:0;width:auto}
 button:disabled{opacity:.35;pointer-events:none}
 .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -187,9 +189,10 @@ body.drag::after{content:"Drop music";position:fixed;inset:14px;z-index:5;border
       <button id="bFull" class="icon" title="Fullscreen (F)"><svg viewBox="0 0 24 24"><path d="M4 4h6v2H6v4H4zM14 4h6v6h-2V6h-4zM4 14h2v4h4v2H4zM18 14h2v6h-6v-2h4z"/></svg></button>
     </div>
     <div class="sliders">
-      <label>Intensity<input type="range" id="sens" min="0.4" max="2.5" step="0.05" value="1"></label>
+      <label>Intensity<input type="range" id="sens" min="0" max="1" step="0.01" value="0.5"></label>
       <label>Volume<input type="range" id="vol" min="0" max="1" step="0.01" value="1"></label>
     </div>
+    <div class="ver" id="ver"></div>
   </div>
   <div class="row" id="lyrRow" hidden>
     <label>Lyrics</label>
@@ -270,10 +273,26 @@ const THEMES={
   spotify:[[.12,.84,.38],[.05,.36,.18],[.12,.2,.39]]
 };
 const audio=$('audio');
+const VERSION=document.querySelector('meta[name=version]').content;
+// GitHub keeps serving the previous copy for a few minutes after an update: if a newer one is out, switch to it
+(async()=>{
+  if(!/^https?:$/.test(location.protocol))return;
+  try{
+    const r=await fetch(location.pathname+'?fresh='+Date.now(),{cache:'no-store',headers:{Range:'bytes=0-2047'}});
+    const m=(await r.text()).match(/name="version" content="([^"]+)"/);
+    let seen='';try{seen=sessionStorage.getItem('pulse-fresh')||''}catch{}
+    if(m&&m[1]!=VERSION&&m[1]!=seen){
+      try{sessionStorage.setItem('pulse-fresh',m[1])}catch{}
+      location.replace(location.pathname+'?v='+encodeURIComponent(m[1]));
+    }
+  }catch{}
+})();
 
 // ---------- state ----------
 let theme='apple',themeF=0,mode='idle',sens=1,usePhotoColors=true;
-const L={bass:0,mid:0,treb:0,beat:0};
+// beat is the detected pulse; vb is that pulse scaled by the Intensity dial, and is what the visuals use
+const L={bass:0,mid:0,treb:0,beat:0,vb:0};
+let fxk=.8;
 const N=64,bars=new Float32Array(N);
 let pal=THEMES.apple.map(c=>c.slice());
 let rot=0,beats=0,lastBeat=0;
@@ -882,11 +901,13 @@ function capStart(st){
   const vt=st.getVideoTracks()[0];
   if(!vt)return;
   const v=document.createElement('video');
-  v.muted=true;v.playsInline=true;v.srcObject=new MediaStream([vt]);v.play().catch(()=>{});
+  v.muted=true;v.playsInline=true;v.srcObject=new MediaStream([vt]);
+  v.style.cssText='position:fixed;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none';
+  document.body.appendChild(v);v.play().catch(()=>{});
   cap.vid=v;
 }
 function capStop(){
-  if(cap.vid){cap.vid.srcObject=null;cap.vid=null}
+  if(cap.vid){cap.vid.srcObject=null;cap.vid.remove();cap.vid=null}
   cap.ready=false;cap.crop=null;
 }
 // returns [x,y,size] in the shared picture's own pixels
@@ -953,7 +974,7 @@ function capFrame(now){
 const fluxH=[],gaps=[];let tempo=0,missed=0;
 function fire(s){L.beat=Math.max(L.beat,s);beats++;onBeat(s)}
 function analyse(dt,now){
-  let b=0,m=0,tr=0;
+  let b=0,m=0,tr=0,rawB=0;
   const kUp=1-Math.exp(-dt*55),kDown=1-Math.exp(-dt*10.5);
   // a paused link means silence, even though the mic still hears the room
   const gated=ext&&!ext.playing&&isLive();
@@ -962,7 +983,7 @@ function analyse(dt,now){
     an.getByteFrequencyData(freq);
     const hz=ac.sampleRate/an.fftSize;
     const band=(lo,hi)=>{const a=Math.max(1,Math.round(lo/hz)),z=Math.round(hi/hz);let s=0;for(let i=a;i<=z;i++)s+=freq[i];return s/(z-a+1)/255};
-    b=band(30,160)*sens;m=band(200,2000)*sens*1.2;tr=band(2500,9000)*sens*1.6;
+    rawB=band(30,160);b=rawB*sens;m=band(200,2000)*sens*1.2;tr=band(2500,9000)*sens*1.6;
     // bass-heavy or sparse music counts as music too: a recent beat is proof enough
     detect(dt,Math.max(band(200,4000),band(40,200)*.8,now-lastBeat<1?.2:0));
     for(let i=0;i<N;i++){
@@ -990,7 +1011,7 @@ function analyse(dt,now){
   fluxH.push(flux);if(fluxH.length>64)fluxH.shift();
   let mean=0;for(const v of fluxH)mean+=v;mean/=fluxH.length;
   let sd=0;for(const v of fluxH)sd+=(v-mean)*(v-mean);sd=Math.sqrt(sd/fluxH.length);
-  const gap=now-lastBeat,live=b>.1;
+  const gap=now-lastBeat,live=rawB>.09;
   if(live&&flux>mean+1.8*sd&&flux>avg*.25&&gap>(tempo?tempo*.55:.22)){
     // learn the tempo from the spacing of real hits
     if(gap>.25&&gap<1.3){
@@ -1011,8 +1032,8 @@ function analyse(dt,now){
 }
 function onBeat(s){
   // harder hits throw brighter rings and more particles
-  rings.push({r:1,a:.45+s*.55});
-  const sp=theme=='spotify',n=Math.round((sp?14:8)*(.5+s*.6));
+  rings.push({r:1,a:(.45+s*.55)*Math.min(1,fxk+.15)});
+  const sp=theme=='spotify',n=Math.round((sp?14:8)*(.5+s*.6)*Math.min(1.2,fxk*1.25));
   for(let i=0;i<n&&parts.length<300;i++){
     const a=Math.random()*Math.PI*2,v=(sp?.6:.25)+Math.random()*(sp?1:.5);
     parts.push({a,d:1.08,v,life:1,size:(sp?1:2.2)*(.6+Math.random())});
@@ -1023,7 +1044,7 @@ function onBeat(s){
 // ---------- overlay (spectrum, rings, particles) ----------
 function drawFx(dt){
   x.clearRect(0,0,W,H);
-  const cx=W/2+cxOff*H,cy=H/2-cyOff*H,R=artS*H*(1+L.beat*.05+L.bass*.03),sp=theme=='spotify';
+  const cx=W/2+cxOff*H,cy=H/2-cyOff*H,R=artS*H*(1+L.vb*.05+L.bass*.03),sp=theme=='spotify';
   const p0=pal[0],mx=Math.max(...p0,.001);
   const acc=sp?p0.map(v=>Math.round(Math.min(1,v/mx)*255)).join(','):'255,255,255';
   x.lineCap='round';
@@ -1190,7 +1211,7 @@ function drawLyrics(){
     // how far through the line we are, for the highlight sweep
     const end=i+1<lyr.length?lyr[i+1].t:lyr[i].t+5,span=Math.min(8,Math.max(.6,end-lyr[i].t));
     ps[i].style.setProperty('--p',(Math.min(1,(t-lyr[i].t)/span)*100).toFixed(1)+'%');
-    ps[i].style.setProperty('--beat',L.beat.toFixed(2));
+    ps[i].style.setProperty('--beat',L.vb.toFixed(2));
   }
   if(i==lyrLine)return;
   if(lyrLine>=0&&ps[lyrLine])ps[lyrLine].classList.remove('on');
@@ -1255,8 +1276,8 @@ function secretBeat(){
 function drawStamp(){
   if(!secret)return;
   // clean caption sitting flush inside the artwork's bottom-left corner (centred on the Spotify disc)
-  const sp=theme=='spotify',cx=W/2+cxOff*H,cy=H/2-cyOff*H,R=artS*H*(1+L.beat*.05+L.bass*.03);
-  const word=[...'BEAN'],s=R*.3,gap=s*.14,o=dpr*(1+L.beat*3);
+  const sp=theme=='spotify',cx=W/2+cxOff*H,cy=H/2-cyOff*H,R=artS*H*(1+L.vb*.05+L.bass*.03);
+  const word=[...'BEAN'],s=R*.3,gap=s*.14,o=dpr*(1+L.vb*3);
   x.save();
   x.font=`800 ${s}px system-ui,-apple-system,"Segoe UI",sans-serif`;x.textAlign='left';x.textBaseline='alphabetic';
   const ws=word.map(ch=>x.measureText(ch).width),total=ws.reduce((a,b)=>a+b,0)+gap*(word.length-1);
@@ -1322,7 +1343,7 @@ function drawFaces(dt){
     f.x+=f.vx*dt;f.y+=f.vy*dt;f.rot+=f.vr*dt;
     if(f.x<r){f.x=r;f.vx=Math.abs(f.vx)}else if(f.x>w-r){f.x=w-r;f.vx=-Math.abs(f.vx)}
     if(f.y<r){f.y=r;f.vy=Math.abs(f.vy)}else if(f.y>h-r){f.y=h-r;f.vy=-Math.abs(f.vy)}
-    const s=r*2*(1+L.beat*.14)*dpr;
+    const s=r*2*(1+L.vb*.14)*dpr;
     x.save();x.translate(f.x*dpr,f.y*dpr);x.rotate(f.rot+Math.sin(f.ph)*.12);
     x.drawImage(f.img,-s/2,-s/2,s,s);x.restore();
   }
@@ -1342,12 +1363,13 @@ function step(ms){
     if(slowAvg>.026&&qual>.5&&now-qualAt>3){qual-=.25;qualAt=now;slowAvg=.016;resize()}
   }
   analyse(dt,now);
+  L.vb=Math.min(1.3,L.beat*fxk);
 
   themeF+=((theme=='spotify'?1:0)-themeF)*Math.min(1,dt*6);
   artS+=(artT-artS)*Math.min(1,dt*6);cyOff+=(cyT-cyOff)*Math.min(1,dt*6);cxOff+=(cxT-cxOff)*Math.min(1,dt*6);
   rot=(rot+dt*(.12+L.mid*.5))%(Math.PI*2);
   // scenes move faster with the music; switching dips through black to hide the cut
-  flow+=dt*(.35+L.bass*1.5+L.beat*.6);
+  flow+=dt*(.35+L.bass*1.5+L.vb*.6);
   if(bgNext!=bg){dip=Math.min(1,dip+dt*6);if(dip>=1)bg=bgNext}else dip=Math.max(0,dip-dt*4);
   if(fading){mixF+=dt/.7;if(mixF>=1){cur=nxt;fading=false;mixF=0}}
   secretStep(dt);
@@ -1365,7 +1387,7 @@ function step(ms){
   gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,has?A.tex:blankTex);
   gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,has?B.tex:blankTex);
   gl.uniform2f(U.uRes,W,H);gl.uniform1f(U.uTime,now);
-  gl.uniform1f(U.uBass,L.bass);gl.uniform1f(U.uMid,L.mid);gl.uniform1f(U.uTreb,L.treb);gl.uniform1f(U.uBeat,L.beat);
+  gl.uniform1f(U.uBass,L.bass);gl.uniform1f(U.uMid,L.mid);gl.uniform1f(U.uTreb,L.treb);gl.uniform1f(U.uBeat,L.vb);
   gl.uniform1f(U.uTheme,themeF);gl.uniform1f(U.uMix,S?(bfade?bmix:0):C?0:fading?mixF*mixF*(3-2*mixF):0);gl.uniform1f(U.uHas,has?1:0);
   gl.uniform1f(U.uAspA,has?A.asp:1);gl.uniform1f(U.uAspB,has?B.asp:1);
   gl.uniform1f(U.uArt,artS);gl.uniform1f(U.uCy,cyOff);gl.uniform1f(U.uCx,cxOff);
@@ -1450,9 +1472,18 @@ try{if(localStorage.getItem('pulse-more')){$('more').hidden=false;$('bMore').cla
 $('bPrev').onclick=()=>ext?seekTo(0):playTrack(ti-1);
 $('bNext').onclick=()=>playTrack(ti+1);
 $('bFull').onclick=toggleFull;
-$('sens').oninput=e=>sens=+e.target.value;
+// Intensity 0-100%: at the bottom the beat effects are off and the bars move gently, the middle is the
+// designed look, the top is the full-strength version
+function setIntensity(v){
+  v=Math.max(0,Math.min(1,v));
+  sens=.3+1.4*v;fxk=v*1.6;
+  save('pulse-int',v);
+}
+$('sens').oninput=e=>setIntensity(+e.target.value);
+try{const si=localStorage.getItem('pulse-int');if(si!=null&&si!==''&&isFinite(+si)){$('sens').value=+si;setIntensity(+si)}}catch{}
 $('vol').oninput=e=>setVol(+e.target.value);
 try{const sv=localStorage.getItem('pulse-vol');if(sv!=null&&sv!==''){vol=Math.max(0,Math.min(1,+sv||0));$('vol').value=vol}}catch{}
+$('ver').textContent='Version '+VERSION;
 $('bColors').onclick=()=>{usePhotoColors=!usePhotoColors;$('bColors').classList.toggle('on',usePhotoColors)};
 // the seek bar follows whichever player is active: the audio element, a plain link, or the YouTube player
 const songDur=()=>ext?(ext.kind=='yt'?ext.dur||0:ext.a.duration||0):audio.duration||0;
