@@ -81,6 +81,7 @@ input[type=checkbox]{accent-color:var(--accent)}
 #lyrIn{max-width:760px;margin:0 auto;padding:0 24px;will-change:transform;transition:transform .5s cubic-bezier(.2,.8,.2,1)}
 #lyrIn p{margin:0;padding:.28em 0;font-weight:700;line-height:1.25;color:#fff;opacity:.3;transform:scale(.86);
   transition:opacity .4s,transform .3s;text-shadow:0 2px 14px rgba(0,0,0,.6);text-wrap:balance}
+#lyrIn p.msg{opacity:.8;transform:none;font-weight:600}
 #lyrIn p.on{opacity:1;transform:scale(calc(1 + var(--beat,0)*.03))}
 #lyr.hl{height:7.4em;font-size:clamp(20px,3.3vw,30px);background:rgba(0,0,0,.42);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
 #lyr.hl p{width:fit-content;max-width:100%;margin:.12em auto;padding:.18em .6em;border-radius:.45em;opacity:.6}
@@ -953,21 +954,36 @@ function lyrClear(){
   lyr=null;lyrLine=-2;lyrIn.textContent='';lyrIn.style.transform='';
   lyrEl.hidden=true;$('lyrRow').hidden=true;
 }
+// a single status line in the lyric feed: searching, or nothing to show
+function lyrMsg(text){
+  lyrIn.textContent='';
+  const p=document.createElement('p');p.className='msg';p.textContent=text;lyrIn.appendChild(p);
+  lyrEl.hidden=false;
+  lyrIn.style.transform=`translateY(${(lyrEl.clientHeight-p.offsetHeight)/2}px)`;
+}
 async function lyricsRefresh(){
   clearTimeout(lyrTimer);
   if(!lyrMode){lyrClear();return}
-  const meta=songMeta(),key=meta&&meta.title?meta.artist+'|'+meta.title:'';
+  const meta=songMeta();
+  // '?' means something is playing but its title is unknown (mic, stream, or a link still loading)
+  const key=meta&&meta.title?meta.artist+'|'+meta.title:isLive()||ext?'?':'';
   if(key==lyrKey)return;
   lyrClear();
+  if(!key||key=='?'){
+    lyrWait=0;lyrKey=key;
+    if(key)lyrMsg(ext&&ext.kind=='yt'&&ext.title=='YouTube'?'Finding lyrics…':'Lyrics Unavailable');
+    return;
+  }
+  lyrMsg('Finding lyrics…');
   // the song's length picks the right version of the lyrics, so give it a moment to load
-  if(key&&!meta.duration&&lyrWait<5){lyrWait++;lyrTimer=setTimeout(lyricsRefresh,600);return}
+  if(!meta.duration&&lyrWait<5){lyrWait++;lyrTimer=setTimeout(lyricsRefresh,600);return}
   lyrWait=0;lyrKey=key;
-  if(!key)return;
   const req=++lyrReq;
   let hit=null;
   try{hit=await findLyrics(meta)}catch{}
   if(req!=lyrReq)return;
-  if(!hit||!hit.lines.length){toast('No synced lyrics found for this song');return}
+  if(!hit||!hit.lines.length){lyrMsg('Lyrics Unavailable');return}
+  lyrIn.textContent='';lyrIn.style.transform='';
   for(const l of hit.lines){const p=document.createElement('p');p.textContent=l.text||'♪';lyrIn.appendChild(p)}
   lyr=hit.lines;lyrOff=lyrOffs[key]||0;showOff();
   lyrEl.hidden=false;$('lyrRow').hidden=false;
