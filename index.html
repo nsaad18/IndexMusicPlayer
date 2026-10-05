@@ -2,7 +2,7 @@
 <html lang="en" data-skin="apple">
 <head>
 <meta charset="utf-8">
-<meta name="version" content="2026.10.04-18">
+<meta name="version" content="2026.10.04-19">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'unsafe-inline'; img-src data: blob: https://i.ytimg.com; media-src blob: https: http:; connect-src 'self' https:; frame-src https://www.youtube.com; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -121,6 +121,7 @@ body.gaming .ui{opacity:0;pointer-events:none}
 #more{display:grid;gap:10px}
 .sliders{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px}
 .sliders label{min-width:0}
+.val{min-width:30px;text-align:right;font-variant-numeric:tabular-nums}
 .ver{font-size:11px;color:var(--dim);text-align:right}
 .sliders input{flex:1;min-width:0;width:auto}
 button:disabled{opacity:.35;pointer-events:none}
@@ -237,7 +238,7 @@ body.drag::after{content:"Drop music";position:fixed;inset:14px;z-index:5;border
       <button id="bFull" class="icon" title="Fullscreen (F)"><svg viewBox="0 0 24 24"><path d="M4 4h6v2H6v4H4zM14 4h6v6h-2V6h-4zM4 14h2v4h4v2H4zM18 14h2v6h-6v-2h4z"/></svg></button>
     </div>
     <div class="sliders">
-      <label>Intensity<input type="range" id="sens" min="0" max="1" step="0.01" value="0.5"></label>
+      <label>Intensity<input type="range" id="sens" min="0" max="1" step="0.01" value="0.5"><span class="val" id="sensVal">50%</span></label>
       <label>Volume<input type="range" id="vol" min="0" max="1" step="0.01" value="1"></label>
     </div>
     <div class="ver" id="ver"></div>
@@ -545,8 +546,8 @@ vec3 edit(vec2 uv,float asp){
 }
 // 10 backdrop: the cover art filling the screen, softened and dimmed, with a slight push on the beat
 vec3 backdrop(vec2 uv,float asp){
-  vec2 q=(uv-.5)*(1.-.025*uBeat)+.5;
-  return photo(q,asp,1.5)*(.5+.12*uBass)+uBeat*.03;
+  vec2 q=(uv-.5)*(1.-.06*uBeat-.015*uBass)+.5;
+  return photo(q,asp,1.5)*(.46+.16*uBass+.16*uBeat)+uBeat*.04;
 }
 void main(){
   vec2 uv=gl_FragCoord.xy/uRes;float asp=uRes.x/uRes.y;vec2 p=(uv-.5)*vec2(asp,1.);
@@ -1884,6 +1885,7 @@ function bpStep(){
   }
   let end=bp.idx;
   if(bp.mode!=1)while(end<N.length&&N[end].t-D.ar<=t)end++;
+  bpAmbience();
   bx.lineCap='round';bx.textAlign='center';bx.textBaseline='middle';
   // faint lines join the circles of a run, so the eye knows where to go next
   for(let i=bp.idx;i<end-1;i++){
@@ -1940,6 +1942,24 @@ function bpStep(){
   }
   bpHud();
 }
+// the music still shows through the game, without getting in the way of the targets:
+// a low spectrum along the bottom edge and a soft glow around the screen on each beat
+function bpAmbience(){
+  const w=innerWidth,h=innerHeight,p0=pal[0],mx=Math.max(...p0,.001);
+  const acc=p0.map(v=>Math.round(Math.min(1,v/mx)*255)).join(',');
+  if(L.vb>.02){
+    const g=bx.createRadialGradient(w/2,h/2,Math.min(w,h)*.34,w/2,h/2,Math.hypot(w,h)/2);
+    g.addColorStop(0,'rgba('+acc+',0)');g.addColorStop(1,'rgba('+acc+','+(.38*Math.min(1,L.vb)).toFixed(3)+')');
+    bx.fillStyle=g;bx.fillRect(0,0,w,h);
+  }
+  const n=40,bw=w/(n*2);
+  for(let i=0;i<n*2;i++){
+    const k=i<n?n-1-i:i-n,v=bars[Math.floor(k/n*N*.8)],bh=v*h*.17;
+    if(bh<1)continue;
+    bx.fillStyle='rgba('+acc+','+(.16+.3*v).toFixed(3)+')';
+    bx.fillRect(i*bw+bw*.2,h-3-bh,bw*.6,bh);
+  }
+}
 // Lyrics mode: the words in flight. Each one grows, brightens and gains a coloured glow as it nears its peak,
 // which is the moment to tap it; a missed word turns red and falls away
 function bpDrawWords(t,D){
@@ -1950,7 +1970,7 @@ function bpDrawWords(t,D){
     const nt=N[i];
     if(nt.hit==1)continue;
     const [x0,y0,tilt,tau]=bpPos(nt,t,D),c=Math.max(0,1-Math.abs(tau)/D.ar),missed=nt.hit==2;
-    const wob=nt.shake&&now-nt.shake<220?Math.sin((now-nt.shake)/18)*fs*.12:0,s=.8+.2*c*c;
+    const wob=nt.shake&&now-nt.shake<220?Math.sin((now-nt.shake)/18)*fs*.12:0,s=.8+.2*c*c+L.vb*.05;
     bx.save();
     bx.translate(x0+wob,y0);bx.rotate(tilt);bx.scale(s,s);
     bx.font='800 '+fs+'px '+bp.font;
@@ -2146,6 +2166,7 @@ $('bFull').onclick=toggleFull;
 function setIntensity(v){
   v=Math.max(0,Math.min(1,v));
   sens=.3+1.4*v;fxk=v*1.6;
+  $('sensVal').textContent=v<=0?'Off':Math.round(v*100)+'%';
   save('pulse-int',v);
 }
 $('sens').oninput=e=>setIntensity(+e.target.value);
