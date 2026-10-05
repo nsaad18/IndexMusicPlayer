@@ -2,8 +2,8 @@
 <html lang="en" data-skin="apple">
 <head>
 <meta charset="utf-8">
-<meta name="version" content="2026.10.04-12">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'unsafe-inline'; img-src data: blob: https://i.ytimg.com; media-src blob: https: http:; connect-src 'self' https://lrclib.net https://www.youtube.com; frame-src https://www.youtube.com; base-uri 'none'; form-action 'none'">
+<meta name="version" content="2026.10.04-13">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'unsafe-inline'; img-src data: blob: https://i.ytimg.com; media-src blob: https: http:; connect-src 'self' https:; frame-src https://www.youtube.com; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -85,7 +85,7 @@ button.icon svg{width:18px;height:18px;fill:currentColor;display:block}
 @keyframes splashText{0%{transform:scale(2.600,1.400);filter:blur(14px)}28%{transform:scale(1);filter:blur(0)}70%{transform:scale(1.050)}100%{transform:scale(1.700,1.100);filter:blur(10px)}}
 /* ---- Beat Popper ---- */
 body.gaming .ui{opacity:0;pointer-events:none}
-#game{position:fixed;inset:0;z-index:4;background:rgba(0,0,0,.52);font-family:var(--font)}
+#game{position:fixed;inset:0;z-index:4;background:rgba(0,0,0,.34);font-family:var(--font)}
 #game canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
 .bpPanel{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(440px,calc(100vw - 32px));
   display:grid;gap:14px;justify-items:center;text-align:center;padding:26px 22px;
@@ -148,11 +148,12 @@ input[type=checkbox]{accent-color:var(--accent)}
 #lyr.hl p.on{opacity:1;background:var(--accent);box-shadow:0 4px 18px rgba(0,0,0,.35);
   background:linear-gradient(90deg,var(--accent) var(--p,0%),color-mix(in srgb,var(--accent) 38%,transparent) var(--p,0%))}
 #lyr.hl p.on{color:var(--on);text-shadow:none}
-#linkIn{flex:1;min-width:0;font:inherit;font-size:16px;color:var(--text);background:rgba(255,255,255,.1);
+#bpLinkIn,#linkIn{flex:1;min-width:0;font:inherit;font-size:16px;color:var(--text);background:rgba(255,255,255,.1);
   border:1px solid var(--panel-border);border-radius:var(--btn-radius);padding:8px 12px;outline:none;
   -webkit-user-select:text;user-select:text}
-#linkIn:focus{border-color:var(--accent)}
-#linkIn::placeholder{color:var(--dim)}
+#bpLinkIn:focus,#linkIn:focus{border-color:var(--accent)}
+#bpLinkIn::placeholder,#linkIn::placeholder{color:var(--dim)}
+.bpLink{display:flex;gap:8px;width:100%}
 .row>#bGo{flex:none}
 .ext{left:0;top:0;z-index:3;width:min(220px,58vw);border-radius:14px;overflow:hidden;background:#000;
   border:1px solid var(--panel-border);box-shadow:0 10px 30px rgba(0,0,0,.45);will-change:transform;
@@ -273,6 +274,7 @@ body.drag::after{content:"Drop music";position:fixed;inset:14px;z-index:5;border
     <h2>BEAT POPPER</h2>
     <p class="bpDim" id="bpSong">Pick a song from your device. Power builds the circles from its beat.</p>
     <div class="bpBtns"><button id="bpPick">Choose a song</button></div>
+    <div class="bpLink"><input type="url" id="bpLinkIn" placeholder="or paste an MP3 or MP4 link" autocomplete="off" autocapitalize="off" spellcheck="false"><button id="bpLinkGo">Load</button></div>
     <div class="seg" id="bpDiff"><button data-d="0">Easy</button><button data-d="1">Normal</button><button data-d="2">Hard</button></div>
     <label class="bpOff" title="Raise this if you find yourself hitting late, for example on Bluetooth headphones">Audio delay<input type="range" id="bpOffset" min="-150" max="150" step="5" value="0"><span id="bpOffVal">0 ms</span></label>
     <p class="bpDim">Click each circle as its ring closes on it. Z or X also hit at the cursor. Esc pauses.</p>
@@ -531,6 +533,11 @@ vec3 edit(vec2 uv,float asp){
   c-=.05*sin(gl_FragCoord.y*1.6);
   return c;
 }
+// 10 backdrop: the cover art filling the screen, softened and dimmed, with a slight push on the beat
+vec3 backdrop(vec2 uv,float asp){
+  vec2 q=(uv-.5)*(1.-.025*uBeat)+.5;
+  return photo(q,asp,1.5)*(.5+.12*uBass)+uBeat*.03;
+}
 void main(){
   vec2 uv=gl_FragCoord.xy/uRes;float asp=uRes.x/uRes.y;vec2 p=(uv-.5)*vec2(asp,1.);
   // hyper warp: the whole scene swirls into the centre while switching Secret mode
@@ -553,20 +560,21 @@ void main(){
     else if(bg==6)col=grid(p);
     else if(bg==7)col=waves(p);
     else if(bg==8)col=mosaic(p,t);
-    else col=edit(uv,asp);
-    col=mix(col,mix(vec3(.07),col,.85),uDark);
+    else if(bg==9)col=edit(uv,asp);
+    else col=backdrop(uv,asp);
+    if(bg<10)col=mix(col,mix(vec3(.07),col,.85),uDark);
   }
   col*=(1.-.3*dot(p,p))*(1.-uDip);
 
   // artwork: rounded square (Apple) morphing to a spinning disc (Spotify)
-  float s=uArt*(1.+uBeat*.05+uBass*.03);
+  float s=max(uArt,1e-4)*(1.+uBeat*.05+uBass*.03);   // uArt 0 hides the card (see the mask below)
   vec2 q=(p-vec2(uCx,uCy))/s;
   float rr=uRR;
   float dd=mix(length(max(abs(q)-1.+rr,0.))-rr,length(q)-1.,uTheme);
   col*=1.-.4*exp(-max(dd,0.)*3.);
   col+=mix(uC1,vec3(1.),.3)*exp(-max(dd,0.)*6.)*uBeat*.3;
   float fw=1.5/(uRes.y*s);
-  float m=smoothstep(fw,-fw,dd);
+  float m=smoothstep(fw,-fw,dd)*step(.001,uArt);
   if(m>0.){
     float c=cos(uRot),sn=sin(uRot);vec2 r=mat2(c,-sn,sn,c)*q;
     r+=normalize(r+1e-5)*sin(length(r)*9.-uTime*5.)*.018*uBass;
@@ -1044,6 +1052,7 @@ function onBeat(s){
 // ---------- overlay (spectrum, rings, particles) ----------
 function drawFx(dt){
   x.clearRect(0,0,W,H);
+  if(bp.open)return;                      // the game has the screen: no spectrum or rings under the circles
   const cx=W/2+cxOff*H,cy=H/2-cyOff*H,R=artS*H*(1+L.vb*.05+L.bass*.03),sp=theme=='spotify';
   const p0=pal[0],mx=Math.max(...p0,.001);
   const yt=theme=='ytm';
@@ -1580,6 +1589,31 @@ async function bpLoad(file){
     }catch{}
   },900);
 }
+// a direct link to an audio or video file: download it, then treat it exactly like an uploaded song
+async function bpLoadLink(){
+  const u=$('bpLinkIn').value.trim();
+  if(!u)return;
+  if(!/^https:\/\//i.test(u)){bpSet('bpSong','Paste a full link starting with https://');return}
+  if(/youtu\.?be|music\.youtube/i.test(u)){
+    bpSet('bpSong','YouTube links cannot be used here. YouTube does not let a site read the sound of a video, so there is nothing to build the map from. Use a direct MP3 or MP4 link, or a file.');
+    return;
+  }
+  $('bpLinkIn').blur();$('bpStart').disabled=true;
+  bpSet('bpSong','Downloading the song…');
+  let blob;
+  try{
+    const r=await fetch(u,{mode:'cors',credentials:'omit'});
+    if(!r.ok)throw 0;
+    blob=await r.blob();
+  }catch{
+    bpSet('bpSong','That link could not be read. Its server either blocks other sites or the link is not a direct file. Download the song and use Choose a song instead.');
+    return;
+  }
+  let name='Linked song';
+  try{name=decodeURIComponent(new URL(u).pathname.split('/').pop())||name}catch{}
+  $('bpLinkIn').value='';
+  await bpLoad(new File([blob],name,{type:blob.type||'audio/mpeg'}));
+}
 function bpStart(){
   if(!bp.buf||!bp.notes.length)return;
   bpStopSong();bpBuild();
@@ -1704,6 +1738,7 @@ function bpStep(){
   bpHud();
 }
 function bpKey(e){
+  if(e.target.tagName=='INPUT'&&e.key!='Escape')return;
   if(e.key=='Escape'){
     if(bp.state=='play')bpPause();else if(bp.state=='pause')bpResume();else bpClose();
   }else if((e.key=='z'||e.key=='Z'||e.key=='x'||e.key=='X')&&!e.repeat)bpHit(bp.mx,bp.my);
@@ -1721,6 +1756,8 @@ $('bpFile').onchange=e=>{bpLoad(e.target.files[0]);e.target.value=''};
 $('bpDiff').onclick=e=>{if(e.target.dataset.d)bpSetDiff(+e.target.dataset.d)};
 $('bpOffset').oninput=e=>{bp.off=+e.target.value;bpSet('bpOffVal',bp.off+' ms');save('pulse-bp-off',bp.off)};
 $('bpStart').onclick=bpStart;
+$('bpLinkGo').onclick=bpLoadLink;
+$('bpLinkIn').onkeydown=e=>{if(e.key=='Enter')bpLoadLink()};
 $('bpExit').onclick=$('bpExit2').onclick=bpClose;
 $('bpPauseBtn').onclick=bpPause;
 $('bpResume').onclick=bpResume;
@@ -1791,8 +1828,8 @@ function step(ms){
   gl.uniform1f(U.uBass,L.bass);gl.uniform1f(U.uMid,L.mid);gl.uniform1f(U.uTreb,L.treb);gl.uniform1f(U.uBeat,L.vb);
   gl.uniform1f(U.uTheme,themeF);gl.uniform1f(U.uRR,rrF);gl.uniform1f(U.uDark,darkF);gl.uniform1f(U.uMix,S?(bfade?bmix:0):fading?mixF*mixF*(3-2*mixF):0);gl.uniform1f(U.uHas,has?1:0);
   gl.uniform1f(U.uAspA,has?A.asp:1);gl.uniform1f(U.uAspB,has?B.asp:1);
-  gl.uniform1f(U.uArt,artS);gl.uniform1f(U.uCy,cyOff);gl.uniform1f(U.uCx,cxOff);
-  gl.uniform1f(U.uBg,S?9:bg);gl.uniform1f(U.uVar,bvar);gl.uniform1f(U.uWarp,warp);gl.uniform1f(U.uFlow,flow);gl.uniform1f(U.uDip,dip);gl.uniform1f(U.uRot,rot*themeF);
+  gl.uniform1f(U.uArt,bp.open?0:artS);gl.uniform1f(U.uCy,cyOff);gl.uniform1f(U.uCx,cxOff);
+  gl.uniform1f(U.uBg,S?9:bp.open&&has?10:bg);gl.uniform1f(U.uVar,bvar);gl.uniform1f(U.uWarp,warp);gl.uniform1f(U.uFlow,flow);gl.uniform1f(U.uDip,dip);gl.uniform1f(U.uRot,rot*themeF);
   gl.uniform3fv(U.uC1,pal[0]);gl.uniform3fv(U.uC2,pal[1]);gl.uniform3fv(U.uC3,pal[2]);
   gl.drawArrays(gl.TRIANGLES,0,3);
 
