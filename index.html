@@ -2,7 +2,7 @@
 <html lang="en" data-skin="apple">
 <head>
 <meta charset="utf-8">
-<meta name="version" content="2026.10.04-7">
+<meta name="version" content="2026.10.04-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'unsafe-inline'; img-src data: blob: https://i.ytimg.com; media-src blob: https: http:; connect-src 'self' https://lrclib.net https://www.youtube.com; frame-src https://www.youtube.com; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -83,6 +83,8 @@ button.icon svg{width:18px;height:18px;fill:currentColor;display:block}
 #splash.go span{animation:splashText 1.500s cubic-bezier(.2,.8,.2,1) both}
 @keyframes splashIn{0%{opacity:0}20%,68%{opacity:1}100%{opacity:0}}
 @keyframes splashText{0%{transform:scale(2.600,1.400);filter:blur(14px)}28%{transform:scale(1);filter:blur(0)}70%{transform:scale(1.050)}100%{transform:scale(1.700,1.100);filter:blur(10px)}}
+#bTap{flex:1;min-height:44px;font-size:14px}
+#bpm{font-size:12px;color:var(--dim);min-width:74px;text-align:center;font-variant-numeric:tabular-nums}
 #more{display:grid;gap:10px}
 .sliders{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px}
 .sliders label{min-width:0}
@@ -212,6 +214,10 @@ body.drag::after{content:"Drop music";position:fixed;inset:14px;z-index:5;border
     <label>Lyrics</label>
     <button id="bLyrS" title="Tap right as a line starts being sung to snap the lyrics back in time">Sync lyrics</button>
     <button id="bLyrR" title="Clear the adjustment for this song">Reset</button>
+  </div>
+  <div class="row" id="tapRow" hidden>
+    <button id="bTap" title="Tap in time with the music to set the beat">Tap the beat</button>
+    <span id="bpm"></span>
   </div>
   <div class="row" id="linkRow" hidden>
     <input type="url" id="linkIn" placeholder="Paste a YouTube, MP3 or MP4 link" autocomplete="off" autocapitalize="off" spellcheck="false">
@@ -644,6 +650,7 @@ function stopOthers(keep){
 function setMode(m){
   mode=m;
   $('bNext').disabled=!!ext;
+  $('tapRow').hidden=!ext;showBpm();
   musicOn=false;loudT=quietT=0;
   if(isLive())$('track').textContent=ext?ext.title:'Waiting for music…';
   if(m=='idle')$('track').textContent=ext?ext.title:playlist.length?playlist[ti].name:'No track';
@@ -812,7 +819,9 @@ function extToggle(){
 }
 // links play in their own player, so the visuals follow them by listening through the mic
 async function startSync(){
-  if(isLive())return;
+  // on a phone, turning the mic on drops the whole device into call-quality sound, so links there
+  // keep full quality and the visuals keep time from the tapped beat instead (see synth below)
+  if(isLive()||!canHover)return;
   await toggleMic();
 }
 async function loadThumb(id){
@@ -842,12 +851,15 @@ function openYT(id){
   f.onload=()=>{f.contentWindow.postMessage(JSON.stringify({event:'listening',id:1,channel:'widget'}),YT);setTimeout(()=>{if(ext&&ext.el===f)setVol(vol)},1500)};
   $('extBox').appendChild(f);showExt();
   ext={kind:'yt',id,el:f,title:'YouTube',playing:false};
+  const sv=bpmMap[id];
+  if(Array.isArray(sv)&&sv[0]>.25&&sv[0]<1.5){ext.T=sv[0];ext.ph=sv[1]||0;ext.ph0=sv[2]!=null?sv[2]:ext.ph}
   if(!isLive())setMode('idle');else setMode(mode);
   fetch(`${YT}/oembed?format=json&url=`+encodeURIComponent(`${YT}/watch?v=${id}`)).then(r=>r.json())
     .then(j=>{if(ext&&ext.el===f&&j.title){ext.title=j.title;ext.author=j.author_name||'';$('track').textContent=j.title;lyricsRefresh()}}).catch(()=>{});
   // video thumbnail becomes the artwork; maxres is a 120px placeholder when the video has none
   loadThumb(id);
   startSync();
+  if(!canHover&&!ext.T)toast('Tap the beat in time with the music to sync the visuals');
 }
 function openRaw(t){
   dropExt();
@@ -888,10 +900,64 @@ addEventListener('message',e=>{
   }catch{}
 });
 
+// ---------- beat without sound ----------
+// when a link plays and there is no sound to analyse, the pulse runs off the song's clock: 120 BPM
+// until the listener taps the real beat, which is then remembered for that video
+let taps=[],bpmMap={};
+try{bpmMap=JSON.parse(localStorage.getItem('pulse-bpm'))||{}}catch{}
+function showBpm(){$('bpm').textContent=ext?Math.round(60/(ext.T||.5))+' BPM'+(ext.T?'':' (default)'):''}
+function tapBeat(){
+  if(!ext)return;
+  const n=performance.now(),t=songTime();
+  if(t==null)return;
+  if(taps.length&&n-taps[taps.length-1].n>2000)taps=[];
+  taps.push({n,t});if(taps.length>12)taps.shift();
+  fire(.9);
+  if(ext.T&&ext.ph0!=null&&t-ext.ph0>4){
+    // a tap long after the first lock measures the tempo over that whole stretch, which is far more exact
+    const k=Math.round((t-ext.ph0)/ext.T),cand=(t-ext.ph0)/k;
+    if(k>0&&Math.abs(cand/ext.T-1)<.03){ext.T=cand;ext.ph=t}
+  }
+  if(taps.length>=3){
+    const T=(taps[taps.length-1].n-taps[0].n)/1000/(taps.length-1);
+    if(T>.25&&T<1.5){
+      if(!ext.T||Math.abs(T/ext.T-1)>.03){ext.T=T;ext.ph0=t}
+      ext.ph=t;
+    }
+  }
+  if(ext.T){
+    ext.bi=Math.floor((t-ext.ph)/ext.T);
+    if(ext.id){bpmMap[ext.id]=[ext.T,ext.ph,ext.ph0];save('pulse-bpm',JSON.stringify(bpmMap))}
+  }else if(taps.length==1)toast('Keep tapping in time with the music');
+  showBpm();
+}
+function synth(dt,now){
+  const t=songTime(),T=ext.T||.5,ph=ext.ph||0;
+  let env=0;
+  if(t!=null){
+    const k=Math.floor((t-ph)/T);
+    // every fourth beat lands a little harder; a seek just re-anchors without a burst of beats
+    if(ext.bi!=null&&k!=ext.bi&&Math.abs(k-ext.bi)<3)fire(((k%4)+4)%4==0?.9:.65);
+    ext.bi=k;
+    env=Math.exp(-((((t-ph)%T)+T)%T)*6);
+  }
+  const kk=1-Math.exp(-dt*18);
+  L.bass+=((.22+.6*env)*sens-L.bass)*kk;
+  L.mid+=((.3+.14*Math.sin(now*1.3)+.2*env)*sens-L.mid)*kk;
+  L.treb+=((.2+.25*env)*sens-L.treb)*kk;
+  for(let i=0;i<N;i++){
+    const w=.5+.5*Math.sin(i*.45+now*2.1+Math.sin(i*.17-now*1.3)*2);
+    const v=Math.min(1,(.1+.6*w*(.4+.6*env))*(1-i/N*.45)*sens);
+    bars[i]+=(v-bars[i])*kk;
+  }
+  L.beat*=Math.exp(-dt*6);
+}
+
 // ---------- analysis ----------
 const fluxH=[],gaps=[];let tempo=0,missed=0;
 function fire(s){L.beat=Math.max(L.beat,s);beats++;onBeat(s)}
 function analyse(dt,now){
+  if(ext&&ext.playing&&!isLive()){synth(dt,now);return}
   let b=0,m=0,tr=0,rawB=0;
   const kUp=1-Math.exp(-dt*55),kDown=1-Math.exp(-dt*10.5);
   // a paused link means silence, even though the mic still hears the room
@@ -1408,6 +1474,8 @@ $('bGo').onclick=loadLink;
 $('linkIn').onkeydown=e=>{if(e.key=='Enter')loadLink()};
 $('bExtX').onclick=closeExt;
 $('bSync').onclick=resync;
+$('bSync').hidden=!canHover;
+$('bTap').onclick=tapBeat;
 $('bBg').onclick=()=>setBg(bgNext+1);
 $('bLyr').onclick=()=>setLyrics((lyrMode+1)%3);
 $('bLyrS').onclick=lyrSync;
