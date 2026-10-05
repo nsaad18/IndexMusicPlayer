@@ -2,7 +2,7 @@
 <html lang="en" data-skin="apple">
 <head>
 <meta charset="utf-8">
-<meta name="version" content="2026.10.04-13">
+<meta name="version" content="2026.10.04-14">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'unsafe-inline'; img-src data: blob: https://i.ytimg.com; media-src blob: https: http:; connect-src 'self' https:; frame-src https://www.youtube.com; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -1375,7 +1375,7 @@ function setFaces(on){
 // a click-the-circles rhythm game: an uploaded song is analysed for its beat, circles are placed on it,
 // and each one is clicked as its shrinking ring closes
 const bp={open:false,state:'menu',buf:null,an:null,tr:null,lyr:null,notes:[],idx:0,src:null,startAt:0,diff:1,off:0,
-  score:0,combo:0,maxCombo:0,hp:1,n:[0,0,0,0],fx:[],mx:-99,my:-99,r:20,dpr:1,seed:1,lyrI:-1,font:'sans-serif'};
+  score:0,combo:0,maxCombo:0,hp:1,n:[0,0,0,0],fx:[],mx:-99,my:-99,r:20,reach:1.06,dpr:1,seed:1,lyrI:-1,font:'sans-serif'};
 const bpC=$('bp'),bx=bpC.getContext('2d');
 // per difficulty: how long a circle is on screen, its size, and the Perfect / Good / Okay timing windows (seconds)
 const BP_DIFF=[{ar:1.35,cs:.078,w:[.07,.13,.2]},{ar:1.05,cs:.064,w:[.055,.11,.17]},{ar:.8,cs:.054,w:[.045,.095,.15]}];
@@ -1511,11 +1511,17 @@ function bpPlace(){
     left--;nt.x=x;nt.y=y;nt.num=num;nt.col=BP_COL[ci%BP_COL.length];prev=nt.t;
   }
 }
-// the 4:3 play field, centred, and each circle's place on screen
+// the play field and each circle's place on screen. PC: a centred 4:3 field. Phone: the field takes the
+// screen's own shape and the circles are half as big again, with a more forgiving touch area, for fingers
 function bpLayout(){
-  const w=innerWidth,h=innerHeight,ph=Math.min(h*.72,w*.9*.75),pw=ph*4/3,l=(w-pw)/2,tp=(h-ph)/2+h*.02;
-  bp.r=BP_DIFF[bp.diff].cs*ph;
-  for(const nt of bp.notes){nt.px=l+nt.x*pw;nt.py=tp+nt.y*ph}
+  const w=innerWidth,h=innerHeight,touch=!canHover;
+  let pw,ph;
+  if(h>w){pw=w*.94;ph=h*.68}else{ph=Math.min(h*.72,w*.9*.75);pw=ph*4/3}
+  const l=(w-pw)/2,tp=(h-ph)/2+h*.02,base=BP_DIFF[bp.diff].cs*Math.min(pw,ph);
+  bp.r=touch?Math.max(30,base*1.5):base;
+  bp.reach=touch?1.25:1.06;
+  // keep whole circles inside the field
+  for(const nt of bp.notes){nt.px=l+bp.r+nt.x*(pw-2*bp.r);nt.py=tp+bp.r+nt.y*(ph-2*bp.r)}
 }
 function bpResize(){
   bp.dpr=Math.min(devicePixelRatio||1,2);
@@ -1655,7 +1661,7 @@ function bpJudge(nt,k){
 function bpHit(px,py){
   if(bp.state!='play')return;
   const nt=bp.notes[bp.idx];
-  if(!nt||Math.hypot(px-nt.px,py-nt.py)>bp.r*1.06)return;
+  if(!nt||Math.hypot(px-nt.px,py-nt.py)>bp.r*bp.reach)return;
   const w=BP_DIFF[bp.diff].w,dt=bpTime()-nt.t,a=Math.abs(dt);
   if(dt<-w[2]){nt.shake=performance.now();return}   // far too early: the circle shakes and nothing is scored
   bpJudge(nt,a<=w[0]?0:a<=w[1]?1:2);
