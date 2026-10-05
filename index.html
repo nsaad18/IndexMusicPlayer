@@ -2,7 +2,7 @@
 <html lang="en" data-skin="apple">
 <head>
 <meta charset="utf-8">
-<meta name="version" content="2026.10.04-19">
+<meta name="version" content="2026.10.05-1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'unsafe-inline'; img-src data: blob: https://i.ytimg.com; media-src blob: https: http:; connect-src 'self' https:; frame-src https://www.youtube.com; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -235,6 +235,7 @@ body.drag::after{content:"Drop music";position:fixed;inset:14px;z-index:5;border
       <button id="bLyr" title="Show live lyrics for the current song">Lyrics</button>
       <button id="bBg" title="Change the background style (B)">Clouds</button>
       <button id="bColors" class="on" title="Tint everything with colors pulled from the current photo">Colors</button>
+      <button id="bRipple" class="on" title="The water-like ripple that the bass sends across the cover art">Ripple</button>
       <button id="bFull" class="icon" title="Fullscreen (F)"><svg viewBox="0 0 24 24"><path d="M4 4h6v2H6v4H4zM14 4h6v6h-2V6h-4zM4 14h2v4h4v2H4zM18 14h2v6h-6v-2h4z"/></svg></button>
     </div>
     <div class="sliders">
@@ -386,7 +387,7 @@ let rrF=.3,darkF=0;
 let theme='apple',themeF=0,mode='idle',sens=1,usePhotoColors=true;
 // beat is the detected pulse; vb is that pulse scaled by the Intensity dial, and is what the visuals use
 const L={bass:0,mid:0,treb:0,beat:0,vb:0};
-let fxk=.8;
+let fxk=.8,ripple=true;
 const N=64,bars=new Float32Array(N);
 let pal=THEMES.apple.map(c=>c.slice());
 let rot=0,beats=0,lastBeat=0;
@@ -404,7 +405,7 @@ void main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);gl_Position=vec4(p*2.-
 const FS=`#version 300 es
 precision highp float;
 uniform vec2 uRes;
-uniform float uTime,uBass,uMid,uTreb,uBeat,uTheme,uMix,uHas,uAspA,uAspB,uArt,uRot,uCy,uBg,uFlow,uDip,uVar,uWarp,uCx,uRR,uDark;
+uniform float uTime,uBass,uMid,uTreb,uBeat,uTheme,uMix,uHas,uAspA,uAspB,uArt,uRot,uCy,uBg,uFlow,uDip,uVar,uWarp,uCx,uRR,uDark,uRipple;
 uniform vec3 uC1,uC2,uC3;
 uniform sampler2D uA,uB;
 out vec4 o;
@@ -415,6 +416,12 @@ float fbm(vec2 p){float a=.5,s=0.;for(int i=0;i<4;i++){s+=a*noise(p);p=p*2.03+17
 vec2 cover(vec2 uv,float ra,float ia){vec2 s=ra>ia?vec2(1.,ia/ra):vec2(ra/ia,1.);return (uv-.5)*s+.5;}
 vec3 photo(vec2 uv,float ra,float lod){
   return mix(textureLod(uA,cover(uv,ra,uAspA),lod).rgb,textureLod(uB,cover(uv,ra,uAspB),lod).rgb,uMix);}
+// a gentle lift in colour for cover art: hues stay the same, they are just a little richer.
+// Colours that are already strong are lifted less, so nothing turns garish
+vec3 vivid(vec3 c){
+  float l=dot(c,vec3(.299,.587,.114)),sat=max(c.r,max(c.g,c.b))-min(c.r,min(c.g,c.b));
+  return clamp(mix(vec3(l),c,1.+.28*(1.-sat)),0.,1.);
+}
 vec3 pal(float x){x=clamp(x,0.,1.);return x<.5?mix(uC1,uC2,x*2.):mix(uC2,uC3,x*2.-1.);}
 
 // ---- background scenes: each returns the colour behind the artwork ----
@@ -547,7 +554,7 @@ vec3 edit(vec2 uv,float asp){
 // 10 backdrop: the cover art filling the screen, softened and dimmed, with a slight push on the beat
 vec3 backdrop(vec2 uv,float asp){
   vec2 q=(uv-.5)*(1.-.06*uBeat-.015*uBass)+.5;
-  return photo(q,asp,1.5)*(.46+.16*uBass+.16*uBeat)+uBeat*.04;
+  return vivid(photo(q,asp,1.5))*(.46+.16*uBass+.16*uBeat)+uBeat*.04;
 }
 void main(){
   vec2 uv=gl_FragCoord.xy/uRes;float asp=uRes.x/uRes.y;vec2 p=(uv-.5)*vec2(asp,1.);
@@ -588,11 +595,11 @@ void main(){
   float m=smoothstep(fw,-fw,dd)*step(.001,uArt);
   if(m>0.){
     float c=cos(uRot),sn=sin(uRot);vec2 r=mat2(c,-sn,sn,c)*q;
-    r+=normalize(r+1e-5)*sin(length(r)*9.-uTime*5.)*.018*uBass;
+    r+=normalize(r+1e-5)*sin(length(r)*9.-uTime*5.)*.018*uBass*uRipple;
     r/=1.+uBeat*.07;
     vec2 a=r*.5+.5;vec2 off=r*.025*uBeat+vec2(.004*uTreb,0.);
     vec3 art;
-    if(uHas>.5)art=vec3(photo(a+off,1.,0.).r,photo(a,1.,0.).g,photo(a-off,1.,0.).b);
+    if(uHas>.5)art=vivid(vec3(photo(a+off,1.,0.).r,photo(a,1.,0.).g,photo(a-off,1.,0.).b));
     else art=mix(uC2,uC1,a.y)*(.55+.45*fbm(r*2.+uTime*.2));
     art*=1.+uBeat*.18;
     col=mix(col,art,m);
@@ -610,7 +617,7 @@ function initGL(){
   gl.linkProgram(pr);
   if(!gl.getProgramParameter(pr,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(pr));
   gl.useProgram(pr);
-  for(const n of ['uRes','uTime','uBass','uMid','uTreb','uBeat','uTheme','uMix','uHas','uAspA','uAspB','uArt','uRot','uCy','uBg','uFlow','uDip','uVar','uWarp','uCx','uRR','uDark','uC1','uC2','uC3','uA','uB'])
+  for(const n of ['uRes','uTime','uBass','uMid','uTreb','uBeat','uTheme','uMix','uHas','uAspA','uAspB','uArt','uRot','uCy','uBg','uFlow','uDip','uVar','uWarp','uCx','uRR','uDark','uRipple','uC1','uC2','uC3','uA','uB'])
     U[n]=gl.getUniformLocation(pr,n);
   gl.uniform1i(U.uA,0);gl.uniform1i(U.uB,1);
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
@@ -2074,7 +2081,7 @@ function step(ms){
   gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,has?B.tex:blankTex);
   gl.uniform2f(U.uRes,W,H);gl.uniform1f(U.uTime,now);
   gl.uniform1f(U.uBass,L.bass);gl.uniform1f(U.uMid,L.mid);gl.uniform1f(U.uTreb,L.treb);gl.uniform1f(U.uBeat,L.vb);
-  gl.uniform1f(U.uTheme,themeF);gl.uniform1f(U.uRR,rrF);gl.uniform1f(U.uDark,darkF);gl.uniform1f(U.uMix,S?(bfade?bmix:0):fading?mixF*mixF*(3-2*mixF):0);gl.uniform1f(U.uHas,has?1:0);
+  gl.uniform1f(U.uTheme,themeF);gl.uniform1f(U.uRR,rrF);gl.uniform1f(U.uDark,darkF);gl.uniform1f(U.uRipple,ripple?1:0);gl.uniform1f(U.uMix,S?(bfade?bmix:0):fading?mixF*mixF*(3-2*mixF):0);gl.uniform1f(U.uHas,has?1:0);
   gl.uniform1f(U.uAspA,has?A.asp:1);gl.uniform1f(U.uAspB,has?B.asp:1);
   gl.uniform1f(U.uArt,bp.open?0:artS);gl.uniform1f(U.uCy,cyOff);gl.uniform1f(U.uCx,cxOff);
   gl.uniform1f(U.uBg,S?9:bp.open&&has?10:bg);gl.uniform1f(U.uVar,bvar);gl.uniform1f(U.uWarp,warp);gl.uniform1f(U.uFlow,flow);gl.uniform1f(U.uDip,dip);gl.uniform1f(U.uRot,rot*themeF);
@@ -2175,6 +2182,9 @@ $('vol').oninput=e=>setVol(+e.target.value);
 try{const sv=localStorage.getItem('pulse-vol');if(sv!=null&&sv!==''){vol=Math.max(0,Math.min(1,+sv||0));$('vol').value=vol}}catch{}
 $('ver').textContent='Version '+VERSION;
 $('bColors').onclick=()=>{usePhotoColors=!usePhotoColors;$('bColors').classList.toggle('on',usePhotoColors)};
+function setRipple(on){ripple=on;$('bRipple').classList.toggle('on',on);save('pulse-ripple',on?'1':'0')}
+$('bRipple').onclick=()=>setRipple(!ripple);
+try{if(localStorage.getItem('pulse-ripple')=='0')setRipple(false)}catch{}
 // the seek bar follows whichever player is active: the audio element, a plain link, or the YouTube player
 const songDur=()=>ext?(ext.kind=='yt'?ext.dur||0:ext.a.duration||0):audio.duration||0;
 function seekTo(s){
