@@ -2,7 +2,7 @@
 <html lang="en" data-skin="apple">
 <head>
 <meta charset="utf-8">
-<meta name="version" content="2026.10.04-17">
+<meta name="version" content="2026.10.04-18">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'unsafe-inline'; img-src data: blob: https://i.ytimg.com; media-src blob: https: http:; connect-src 'self' https:; frame-src https://www.youtube.com; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -287,7 +287,7 @@ body.drag::after{content:"Drop music";position:fixed;inset:14px;z-index:5;border
     <div class="seg" id="bpMode"><button data-m="0">Beat</button><button data-m="1">Lyrics</button></div>
     <div class="seg" id="bpDiff"><button data-d="0">Easy</button><button data-d="1">Normal</button><button data-d="2">Hard</button></div>
     <label class="bpOff" title="Raise this if you find yourself hitting late, for example on Bluetooth headphones">Audio delay<input type="range" id="bpOffset" min="-150" max="150" step="5" value="0"><span id="bpOffVal">0 ms</span></label>
-    <p class="bpDim">Beat: hit the circles on the rhythm. Lyrics: tap each word as it is sung. Hit a target as its outline closes on it. Z or X also hit at the cursor. Esc pauses.</p>
+    <p class="bpDim">Beat: hit each circle as its ring closes on it. Lyrics: words are tossed up from below, and you tap each one at the top of its arc, as it is sung. Z or X also hit at the cursor. Esc pauses.</p>
     <div class="bpBtns"><button id="bpStart" class="on" disabled>Start</button><button id="bpExit">Exit</button></div>
   </div>
   <div class="bpPanel" id="bpPauseP" hidden>
@@ -1561,18 +1561,18 @@ function bpLayout(){
   bp.reach=touch?1.25:1.06;
   const r=bp.r;
   if(bp.mode==1){
-    // words read left to right like a line of text, wrapping onto extra rows when a line is long;
-    // each line sits at its own height so the eye is led around the screen
-    bp.fs=Math.max(13,r*.56);
-    bx.font='700 '+bp.fs+'px '+bp.font;
-    const cap=Math.max(2,Math.floor(pw/(r*3.4))),rowH=r*2.5;
+    // Lyrics mode: each word has a peak it is tossed up to. Words of a line step across the screen in reading
+    // order, at varying heights in the upper half, each with a little sideways drift and spin of its own
+    bp.fs=Math.max(24,r*.95);
+    bx.font='800 '+bp.fs+'px '+bp.font;
+    const cap=Math.max(2,Math.floor(pw/(bp.fs*4.2)));
+    const rnd=(p,q)=>{let v=Math.imul(p+1,2654435761)^Math.imul(q+7,1597334677);v=Math.imul(v^v>>>15,2246822519);return((v^v>>>13)>>>0)/4294967296};
     for(const nt of bp.notes){
-      const rows=Math.ceil(nt.wn/cap),row=Math.floor(nt.wi/cap),cols=Math.min(cap,nt.wn-row*cap),col=nt.wi-row*cap;
-      const frac=((nt.li+1)*2654435761>>>0)/4294967296;
-      nt.hw=Math.max(r,(bx.measureText(nt.word).width+r*.9)/2);
-      nt.px=l+r+(col+.5)/cols*(pw-2*r);
-      nt.py=tp+r+frac*Math.max(0,ph-2*r-(rows-1)*rowH)+row*rowH;
-      nt.px=Math.max(nt.hw+4,Math.min(w-nt.hw-4,nt.px));
+      const cols=Math.min(cap,nt.wn),col=nt.wi%cap;
+      nt.hw=bx.measureText(nt.word).width/2+bp.fs*.45;
+      nt.px=Math.max(nt.hw+6,Math.min(w-nt.hw-6,l+(col+.5)/cols*pw+(rnd(nt.li,nt.wi)-.5)*pw*.08));
+      nt.py=tp+ph*(.1+.42*rnd(nt.wi,nt.li+3));
+      nt.vx=(rnd(nt.li+11,nt.wi)-.5)*70;nt.spin=(rnd(nt.wi+5,nt.li)-.5)*.5;
     }
     return;
   }
@@ -1775,7 +1775,7 @@ async function bpLoadLink(){
 function bpStart(){
   if(!bp.buf||!bp.notes.length)return;
   ensureAudio();bpStopSong();bpBuild();
-  Object.assign(bp,{idx:0,score:0,combo:0,maxCombo:0,hp:1,n:[0,0,0,0],fx:[],lyrI:-1});
+  Object.assign(bp,{idx:0,lo:0,score:0,combo:0,maxCombo:0,hp:1,n:[0,0,0,0],fx:[],lyrI:-1});
   const s=ac.createBufferSource();
   s.buffer=bp.buf;s.connect(an);s.connect(out);
   bp.startAt=ac.currentTime+1.4;           // a short lead-in so the first circle is not a surprise
@@ -1807,18 +1807,42 @@ function bpJudge(nt,k){
     bp.hp=Math.min(1,bp.hp+[.035,.018,.004][k]);
     bpTick(k);
   }else{bp.combo=0;bp.hp=Math.max(0,bp.hp-.09)}
-  bp.fx.push({x:nt.px,y:nt.py,t:performance.now(),k,col:nt.col,word:nt.word});
+  // a missed word simply keeps falling, so only hits (and beat-mode misses) leave an effect behind
+  if(!(nt.word&&k==3))bp.fx.push({x:nt.cx??nt.px,y:nt.cy??nt.py,t:performance.now(),k,col:nt.col,word:nt.word});
 }
-// a click or key press: only the next circle in line can be hit
+// where a tossed word is at a given moment: it leaves the bottom of the screen, hangs at its peak exactly
+// when the word is sung, and falls away again. Returns [x, y, tilt, seconds from the peak]
+function bpPos(nt,t,D){
+  const tau=t-nt.t,g=2*(innerHeight+bp.fs-nt.py)/(D.ar*D.ar);
+  return[nt.px+nt.vx*tau,nt.py+g*tau*tau/2,nt.spin*tau,tau];
+}
+// a click or key press
 function bpHit(px,py){
   if(bp.state!='play')return;
-  const nt=bp.notes[bp.idx];
-  if(!nt)return;
-  // a word target is a pill, a beat target is a circle
-  if(nt.word?Math.abs(px-nt.px)>nt.hw*bp.reach||Math.abs(py-nt.py)>bp.r*bp.reach:Math.hypot(px-nt.px,py-nt.py)>bp.r*bp.reach)return;
-  const w=BP_DIFF[bp.diff].w,dt=bpTime()-nt.t,a=Math.abs(dt);
-  if(dt<-w[2]){nt.shake=performance.now();return}   // far too early: the circle shakes and nothing is scored
-  bpJudge(nt,a<=w[0]?0:a<=w[1]?1:2);
+  const D=BP_DIFF[bp.diff],w=D.w,t=bpTime(),N=bp.notes;
+  if(bp.mode==1){
+    // Lyrics: any word in the air can be tapped; if several are under the finger, the one nearest its moment wins
+    let pick=null,pd=9;
+    for(let i=bp.idx;i<N.length&&N[i].t-D.ar<=t;i++){
+      const nt=N[i];
+      if(nt.hit)continue;
+      const [x0,y0]=bpPos(nt,t,D);
+      if(Math.abs(px-x0)>nt.hw*bp.reach||Math.abs(py-y0)>bp.fs*.95*bp.reach)continue;
+      const d=Math.abs(t-nt.t);
+      if(d<pd){pd=d;pick=nt}
+    }
+    if(!pick)return;
+    if(pd>w[2]){pick.shake=performance.now();return}   // well before its peak: it wobbles and nothing is scored
+    [pick.cx,pick.cy]=bpPos(pick,t,D);
+    pick.hit=1;bpJudge(pick,pd<=w[0]?0:pd<=w[1]?1:2);
+    return;
+  }
+  // Beat: only the next circle in line can be hit
+  const nt=N[bp.idx];
+  if(!nt||Math.hypot(px-nt.px,py-nt.py)>bp.r*bp.reach)return;
+  const dt=t-nt.t,a=Math.abs(dt);
+  if(dt<-w[2]){nt.shake=performance.now();return}     // far too early: the circle shakes and nothing is scored
+  nt.hit=1;bpJudge(nt,a<=w[0]?0:a<=w[1]?1:2);
   bp.idx++;
 }
 function bpHud(){
@@ -1852,11 +1876,14 @@ function bpStep(){
   if(bp.state!='play'&&bp.state!='pause')return;
   const t=bpTime(),D=BP_DIFF[bp.diff],r=bp.r,now=performance.now(),N=bp.notes;
   if(bp.state=='play'){
-    while(bp.idx<N.length&&t>N[bp.idx].t+D.w[2]){bpJudge(N[bp.idx],3);bp.idx++}
+    for(;bp.idx<N.length&&(N[bp.idx].hit||t>N[bp.idx].t+D.w[2]);bp.idx++){
+      const nt=N[bp.idx];
+      if(!nt.hit){nt.hit=2;bpJudge(nt,3)}
+    }
     if(bp.idx>=N.length&&t>N[N.length-1].t+1.4){bpFinish();return}
   }
   let end=bp.idx;
-  while(end<N.length&&N[end].t-D.ar<=t)end++;
+  if(bp.mode!=1)while(end<N.length&&N[end].t-D.ar<=t)end++;
   bx.lineCap='round';bx.textAlign='center';bx.textBaseline='middle';
   // faint lines join the circles of a run, so the eye knows where to go next
   for(let i=bp.idx;i<end-1;i++){
@@ -1869,19 +1896,6 @@ function bpStep(){
   for(let i=end-1;i>=bp.idx;i--){
     const nt=N[i],p=1-(nt.t-t)/D.ar,ox=nt.shake&&now-nt.shake<220?Math.sin((now-nt.shake)/18)*r*.12:0;
     bx.globalAlpha=Math.max(0,Math.min(1,p*3.2));
-    if(nt.word){
-      // lyric target: a pill holding the word, with an outline that closes in on it
-      const hw=nt.hw;
-      bx.beginPath();bx.roundRect(nt.px+ox-hw,nt.py-r,hw*2,r*2,r);bx.fillStyle='rgba(12,12,16,.78)';bx.fill();
-      bx.lineWidth=r*.1;bx.strokeStyle=nt.col;bx.stroke();
-      bx.fillStyle='#fff';bx.font='700 '+bp.fs+'px '+bp.font;bx.fillText(nt.word,nt.px+ox,nt.py+bp.fs*.06);
-      if(p<1){
-        const e=r*2.1*(1-p);
-        bx.beginPath();bx.roundRect(nt.px-hw-e,nt.py-r-e,(hw+e)*2,(r+e)*2,r+e);
-        bx.lineWidth=Math.max(2,r*.07);bx.strokeStyle=nt.col;bx.stroke();
-      }
-      continue;
-    }
     bx.beginPath();bx.arc(nt.px+ox,nt.py,r,0,6.2832);bx.fillStyle='rgba(12,12,16,.74)';bx.fill();
     bx.lineWidth=r*.12;bx.strokeStyle=nt.col;bx.stroke();
     bx.beginPath();bx.arc(nt.px+ox,nt.py,r*.78,0,6.2832);bx.lineWidth=1.5;bx.strokeStyle='rgba(255,255,255,.3)';bx.stroke();
@@ -1892,15 +1906,22 @@ function bpStep(){
     }
   }
   bx.globalAlpha=1;
+  if(bp.mode==1)bpDrawWords(t,D);
   // hit bursts and judgement words
   for(let i=bp.fx.length-1;i>=0;i--){
     const e=bp.fx[i],a=(now-e.t)/420;
     if(a>=1){bp.fx.splice(i,1);continue}
     if(e.word){
-      // the word itself pops: it swells and fades in the colour of its judgement, or sinks away on a miss
-      bx.globalAlpha=1-a;bx.fillStyle=['#ffffff','#9fe0ff','#ffe08a','#ff5a6e'][e.k];
-      bx.font='800 '+(bp.fs*(e.k<3?1+a*.8:1))+'px '+bp.font;
-      bx.fillText(e.word,e.x,e.y+(e.k<3?-a*r*.6:a*r*.5));
+      // pop: the word swells and fades while a ring and a burst of sparks fly out from where it was tapped
+      const fs=bp.fs,out2=1-(1-a)*(1-a);
+      bx.globalAlpha=(1-a)*.7;bx.strokeStyle=bx.fillStyle=e.col;
+      bx.beginPath();bx.arc(e.x,e.y,fs*(.7+out2*2.1),0,6.2832);bx.lineWidth=Math.max(.5,3.5*(1-a));bx.stroke();
+      for(let k=0;k<10;k++){
+        const an=k*.6283+e.t%6.283,d=fs*(.6+out2*2.9);
+        bx.beginPath();bx.arc(e.x+Math.cos(an)*d,e.y+Math.sin(an)*d,Math.max(.3,3.2*(1-a)),0,6.2832);bx.fill();
+      }
+      bx.globalAlpha=(1-a)*(1-a);bx.fillStyle=['#ffffff','#9fe0ff','#ffe08a'][e.k]||'#fff';
+      bx.font='800 '+(fs*(1+out2*.8))+'px '+bp.font;bx.fillText(e.word,e.x,e.y);
       continue;
     }
     if(e.k<3){
@@ -1918,6 +1939,28 @@ function bpStep(){
     bx.beginPath();bx.arc(bp.mx,bp.my,r*.07,0,6.2832);bx.fillStyle='#fff';bx.fill();
   }
   bpHud();
+}
+// Lyrics mode: the words in flight. Each one grows, brightens and gains a coloured glow as it nears its peak,
+// which is the moment to tap it; a missed word turns red and falls away
+function bpDrawWords(t,D){
+  const N=bp.notes,fs=bp.fs,now=performance.now();
+  while(bp.lo<N.length&&t-N[bp.lo].t>D.ar)bp.lo++;
+  bx.lineJoin='round';
+  for(let i=bp.lo;i<N.length&&N[i].t-D.ar<=t;i++){
+    const nt=N[i];
+    if(nt.hit==1)continue;
+    const [x0,y0,tilt,tau]=bpPos(nt,t,D),c=Math.max(0,1-Math.abs(tau)/D.ar),missed=nt.hit==2;
+    const wob=nt.shake&&now-nt.shake<220?Math.sin((now-nt.shake)/18)*fs*.12:0,s=.8+.2*c*c;
+    bx.save();
+    bx.translate(x0+wob,y0);bx.rotate(tilt);bx.scale(s,s);
+    bx.font='800 '+fs+'px '+bp.font;
+    bx.globalAlpha=missed?.45*c:.5+.5*c;
+    bx.lineWidth=fs*.14;bx.strokeStyle='rgba(0,0,0,.4)';bx.strokeText(nt.word,0,0);
+    if(!missed){bx.shadowColor=nt.col;bx.shadowBlur=fs*1.1*c*c*c}
+    bx.fillStyle=missed?'#ff5a6e':'#fff';bx.fillText(nt.word,0,0);
+    bx.restore();
+  }
+  bx.globalAlpha=1;
 }
 function bpKey(e){
   if(e.target.tagName=='INPUT'&&e.key!='Escape')return;
