@@ -2,8 +2,7 @@
 <html lang="en" data-skin="apple">
 <head>
 <meta charset="utf-8">
-<meta name="version" content="2026.10.05-1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'unsafe-inline'; img-src data: blob: https://i.ytimg.com; media-src blob: https: http:; connect-src 'self' https:; frame-src https://www.youtube.com; base-uri 'none'; form-action 'none'">
+<meta name="version" content="2026.10.05-2"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'unsafe-inline'; img-src data: blob: https://i.ytimg.com; media-src blob: https: http:; connect-src 'self' https:; frame-src https://www.youtube.com; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -243,6 +242,7 @@ body.drag::after{content:"Drop music";position:fixed;inset:14px;z-index:5;border
       <label>Volume<input type="range" id="vol" min="0" max="1" step="0.01" value="1"></label>
     </div>
     <div class="ver" id="ver"></div>
+    <div class="ver">Private: your music and photos never leave this device</div>
   </div>
   <div class="row" id="lyrRow" hidden>
     <label>Lyrics</label>
@@ -405,7 +405,7 @@ void main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);gl_Position=vec4(p*2.-
 const FS=`#version 300 es
 precision highp float;
 uniform vec2 uRes;
-uniform float uTime,uBass,uMid,uTreb,uBeat,uTheme,uMix,uHas,uAspA,uAspB,uArt,uRot,uCy,uBg,uFlow,uDip,uVar,uWarp,uCx,uRR,uDark,uRipple;
+uniform float uTime,uBass,uMid,uTreb,uBeat,uTheme,uMix,uHas,uAspA,uAspB,uArt,uRot,uCy,uBg,uFlow,uDip,uVar,uWarp,uCx,uRR,uDark,uRipple,uTilt;
 uniform vec3 uC1,uC2,uC3;
 uniform sampler2D uA,uB;
 out vec4 o;
@@ -587,6 +587,7 @@ void main(){
   // artwork: rounded square (Apple) morphing to a spinning disc (Spotify)
   float s=max(uArt,1e-4)*(1.+uBeat*.05+uBass*.03);   // uArt 0 hides the card (see the mask below)
   vec2 q=(p-vec2(uCx,uCy))/s;
+  {float tc=cos(uTilt),ts=sin(uTilt);q=mat2(tc,-ts,ts,tc)*q;}   // leans while it is being dragged
   float rr=uRR;
   float dd=mix(length(max(abs(q)-1.+rr,0.))-rr,length(q)-1.,uTheme);
   col*=1.-.4*exp(-max(dd,0.)*3.);
@@ -617,7 +618,7 @@ function initGL(){
   gl.linkProgram(pr);
   if(!gl.getProgramParameter(pr,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(pr));
   gl.useProgram(pr);
-  for(const n of ['uRes','uTime','uBass','uMid','uTreb','uBeat','uTheme','uMix','uHas','uAspA','uAspB','uArt','uRot','uCy','uBg','uFlow','uDip','uVar','uWarp','uCx','uRR','uDark','uRipple','uC1','uC2','uC3','uA','uB'])
+  for(const n of ['uRes','uTime','uBass','uMid','uTreb','uBeat','uTheme','uMix','uHas','uAspA','uAspB','uArt','uRot','uCy','uBg','uFlow','uDip','uVar','uWarp','uCx','uRR','uDark','uRipple','uTilt','uC1','uC2','uC3','uA','uB'])
     U[n]=gl.getUniformLocation(pr,n);
   gl.uniform1i(U.uA,0);gl.uniform1i(U.uB,1);
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
@@ -635,9 +636,14 @@ function makeTex(src){
   return t;
 }
 let W=0,H=0,artS=.22,cyOff=.06,cxOff=0,artT=.22,cyT=.06,cxT=0,dpr=1,laidOut=false;
+// the cover can be resized by hand: artK is that choice (1 = normal), kept within what fits the screen
+let artK=1,artRaw=1,kMax=1.6,artV=0,cxV=0,cyV=0,dragX=0,dragY=0,tilt=0,tiltV=0;
+try{const k=parseFloat(localStorage.getItem('pulse-art'));if(k>=.45&&k<=2)artK=artRaw=k}catch{}
+const fitK=k=>Math.max(.45,Math.min(kMax,k)),artGoal=()=>artT*fitK(artK);
 function layout(){
   const r=W/H,wide=r>=.8,lyrOn=!lyrEl.hidden,side=lyrOn&&r>=1.25,ih=innerHeight;
   artT=wide&&lyrOn&&!side?.19:Math.min(.22,.36*r);
+  kMax=Math.max(1,Math.min(.47*r,.36)/artT);
   cyT=!wide?.15:lyrOn&&!side?.13:.06; // portrait: lift the artwork clear of the taller dock
   cxT=side?-.3:0;
   lyrEl.classList.toggle('side',side);
@@ -646,7 +652,10 @@ function layout(){
     lyrEl.style.top=(ih*(.5-cyT)-lyrEl.offsetHeight/2)+'px';
   }else{
     lyrEl.style.left='';
-    lyrEl.style.top=(ih*(.5-cyT)+artT*ih*1.58)+'px';
+    let top=ih*(.5-cyT)+artGoal()*ih*1.58;
+    // a bigger cover pushes the lyrics down, but never under the controls
+    if(fitK(artK)>1)top=Math.max(ih*(.5-cyT)+artT*ih*1.58,Math.min(top,document.querySelector('.bottom').getBoundingClientRect().top-lyrEl.offsetHeight-8));
+    lyrEl.style.top=top+'px';
   }
   lyrLine=-2;
 }
@@ -657,7 +666,7 @@ function resize(){
   glc.width=fxc.width=W;glc.height=fxc.height=H;
   gl.viewport(0,0,W,H);
   layout();
-  if(!laidOut){laidOut=true;artS=artT;cyOff=cyT}
+  if(!laidOut){laidOut=true;artS=artGoal();cyOff=cyT}
 }
 
 // ---------- photos ----------
@@ -2061,7 +2070,13 @@ function step(ms){
 
   const shp=SHAPE[theme],kT=Math.min(1,dt*6);
   themeF+=(shp[0]-themeF)*kT;rrF+=(shp[1]-rrF)*kT;darkF+=(shp[2]-darkF)*kT;
-  artS+=(artT-artS)*Math.min(1,dt*6);cyOff+=(cyT-cyOff)*Math.min(1,dt*6);cxOff+=(cxT-cxOff)*Math.min(1,dt*6);
+  // the cover sits on springs: it bounces to its size and wobbles back into place when let go
+  {
+    const sd=Math.min(dt,.033),sp=(x,v,t)=>v+((t-x)*170-v*17)*sd;
+    artV=sp(artS,artV,artGoal());artS=Math.max(.02,artS+artV*sd);
+    cxV=sp(cxOff,cxV,cxT+dragX);cxOff+=cxV*sd;cyV=sp(cyOff,cyV,cyT+dragY);cyOff+=cyV*sd;
+    tiltV=sp(tilt,tiltV,Math.max(-.16,Math.min(.16,-cxV*.35)));tilt+=tiltV*sd;
+  }
   rot=(rot+dt*(.12+L.mid*.5))%(Math.PI*2);
   // scenes move faster with the music; switching dips through black to hide the cut
   flow+=dt*(.35+L.bass*1.5+L.vb*.6);
@@ -2083,7 +2098,7 @@ function step(ms){
   gl.uniform1f(U.uBass,L.bass);gl.uniform1f(U.uMid,L.mid);gl.uniform1f(U.uTreb,L.treb);gl.uniform1f(U.uBeat,L.vb);
   gl.uniform1f(U.uTheme,themeF);gl.uniform1f(U.uRR,rrF);gl.uniform1f(U.uDark,darkF);gl.uniform1f(U.uRipple,ripple?1:0);gl.uniform1f(U.uMix,S?(bfade?bmix:0):fading?mixF*mixF*(3-2*mixF):0);gl.uniform1f(U.uHas,has?1:0);
   gl.uniform1f(U.uAspA,has?A.asp:1);gl.uniform1f(U.uAspB,has?B.asp:1);
-  gl.uniform1f(U.uArt,bp.open?0:artS);gl.uniform1f(U.uCy,cyOff);gl.uniform1f(U.uCx,cxOff);
+  gl.uniform1f(U.uArt,bp.open?0:artS);gl.uniform1f(U.uCy,cyOff);gl.uniform1f(U.uCx,cxOff);gl.uniform1f(U.uTilt,tilt);
   gl.uniform1f(U.uBg,S?9:bp.open&&has?10:bg);gl.uniform1f(U.uVar,bvar);gl.uniform1f(U.uWarp,warp);gl.uniform1f(U.uFlow,flow);gl.uniform1f(U.uDip,dip);gl.uniform1f(U.uRot,rot*themeF);
   gl.uniform3fv(U.uC1,pal[0]);gl.uniform3fv(U.uC2,pal[1]);gl.uniform3fv(U.uC3,pal[2]);
   gl.drawArrays(gl.TRIANGLES,0,3);
@@ -2208,7 +2223,13 @@ $('seek').oninput=()=>seeking=true;
 $('seek').onchange=e=>{const d=songDur();if(d)seekTo(e.target.value/1000*d);seeking=false};
 setInterval(syncSeek,250);
 for(const id of ['sens','vol','seek','bpOffset'])fill($(id));
-audio.onplay=()=>{syncPlay();wake()};audio.onpause=()=>{syncPlay();wake()};
+// shown once, a few seconds into the first song
+let tipped=false;try{tipped=!!localStorage.getItem('pulse-tip')}catch{}
+function coverTip(){
+  if(tipped)return;tipped=true;save('pulse-tip','1');
+  setTimeout(()=>{if(!bp.open)toast(canHover?'Tip: scroll on the cover to resize it, drag it to fling it':'Tip: pinch the cover to resize it, drag it to fling it')},4500);
+}
+audio.onplay=()=>{syncPlay();wake();coverTip()};audio.onpause=()=>{syncPlay();wake()};
 audio.onended=()=>playTrack(ti+1);
 addEventListener('resize',()=>{resize();if(bp.open)bpResize();if(!extEl.hidden)placeExt(ex,ey)});
 document.addEventListener('visibilitychange',()=>{
@@ -2222,15 +2243,69 @@ addEventListener('pointermove',e=>{
   ptr.vx=cap((e.clientX-ptr.x)/el*1000);ptr.vy=cap((e.clientY-ptr.y)/el*1000);
   ptr.x=e.clientX;ptr.y=e.clientY;ptr.t=n;
   if(e.pointerType=='mouse'&&n>hideLock)wake();
+  coverMove(e);
 });
 let hideLock=0;
 let downAt=null;
+// playing with the cover: pinch or scroll to resize, drag to fling, tap to bounce, double-tap to reset
+const touches=new Map();let pinch=null,grab=null,coverTapAt=0;
+const spread=()=>{const[a,b]=[...touches.values()];return Math.max(30,Math.hypot(a[0]-b[0],a[1]-b[1]))};
+function overCover(x,y){
+  const ih=innerHeight,r=artS*ih*1.05;
+  return Math.abs(x-(innerWidth/2+cxOff*ih))<r&&Math.abs(y-(ih/2-cyOff*ih))<r;
+}
+function setArtK(raw){
+  artRaw=fitK(raw);
+  const k=Math.abs(artRaw-1)<.035?1:artRaw;   // settles on the normal size
+  if(k==artK)return;
+  artK=k;layout();save('pulse-art',k.toFixed(3));
+  if(k==1&&navigator.vibrate)try{navigator.vibrate(8)}catch{}
+  toast(k==1?'Cover size 100% (normal)':'Cover size '+Math.round(k*100)+'%');
+}
+function coverDown(e){
+  touches.set(e.pointerId,[e.clientX,e.clientY]);
+  if(touches.size==2){pinch={d:spread(),k:fitK(artRaw)};grab=null;dragX=dragY=0;downAt=null}
+  else if(touches.size==1&&overCover(e.clientX,e.clientY)){
+    grab={x:e.clientX,y:e.clientY,moved:0};
+    try{glc.setPointerCapture(e.pointerId)}catch{}
+  }
+}
+function coverMove(e){
+  if(!touches.has(e.pointerId))return;
+  touches.set(e.pointerId,[e.clientX,e.clientY]);
+  if(pinch){if(!pinch.done&&touches.size==2)setArtK(pinch.k*spread()/pinch.d)}
+  else if(grab){
+    const dx=e.clientX-grab.x,dy=e.clientY-grab.y;
+    grab.moved=Math.max(grab.moved,Math.hypot(dx,dy));
+    if(grab.moved>12){dragX=dx/innerHeight;dragY=-dy/innerHeight}
+  }
+}
+// true when the cover used this touch, so it should not also show or hide the controls
+function coverUp(e){
+  if(!touches.delete(e.pointerId))return false;
+  if(pinch){pinch.done=true;if(!touches.size)pinch=null;return true}
+  if(!grab)return false;
+  const g=grab;grab=null;dragX=dragY=0;
+  if(g.moved>12){cxV+=ptr.vx/innerHeight*.5;cyV-=ptr.vy/innerHeight*.5;return true}   // flung: the springs bring it home
+  if(e.type!='pointerup'||document.body.classList.contains('idle'))return false;
+  const n=performance.now();
+  if(n-coverTapAt<340&&fitK(artK)!=1){coverTapAt=0;setArtK(1)}else coverTapAt=n;
+  artV-=artS*5;if(rings.length<24)rings.push({r:1,a:.5});   // a little squish and a ring
+  return true;
+}
+glc.addEventListener('wheel',e=>{
+  if(bp.open)return;
+  e.preventDefault();setArtK(fitK(artRaw)*Math.exp(-e.deltaY*(e.deltaMode?.05:.0015)));
+},{passive:false});
+document.addEventListener('gesturestart',e=>e.preventDefault());
+addEventListener('pointercancel',e=>{coverUp(e);downAt=null});
 addEventListener('pointerdown',e=>{
   if(ac&&ac.state!='running'&&!(bp.open&&bp.state=='pause'))ac.resume();
   ptr.x=e.clientX;ptr.y=e.clientY;ptr.vx=ptr.vy=0;ptr.t=performance.now();
-  if(e.target===glc)downAt=[e.clientX,e.clientY];else{downAt=null;wake()}
+  if(e.target===glc){downAt=[e.clientX,e.clientY];coverDown(e)}else{downAt=null;wake()}
 });
 addEventListener('pointerup',e=>{
+  if(coverUp(e)){downAt=null;return}
   if(!downAt)return;
   const moved=Math.hypot(e.clientX-downAt[0],e.clientY-downAt[1]);downAt=null;
   if(moved>12)return;
