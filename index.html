@@ -2,7 +2,7 @@
 <html lang="en" data-skin="apple">
 <head>
 <meta charset="utf-8">
-<meta name="version" content="2026.10.04-6">
+<meta name="version" content="2026.10.04-7">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'unsafe-inline'; img-src data: blob: https://i.ytimg.com; media-src blob: https: http:; connect-src 'self' https://lrclib.net https://www.youtube.com; frame-src https://www.youtube.com; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -26,6 +26,12 @@
   --radius:12px;--btn-radius:999px;--blur:0px;
   --font:"Circular Std","Montserrat","Segoe UI",system-ui,sans-serif;
   --weight:700;--track:0;
+}
+[data-skin=ytm]{
+  --accent:#ff0033;--on:#fff;--panel:rgba(15,15,15,.9);--panel-border:rgba(255,255,255,.1);
+  --radius:14px;--btn-radius:18px;--blur:0px;
+  --font:"YouTube Sans","Roboto","Segoe UI",system-ui,sans-serif;
+  --weight:600;--track:0;
 }
 *{box-sizing:border-box}
 html,body{margin:0;position:fixed;inset:0;background:#000;color:var(--text);font-family:var(--font);overflow:hidden;
@@ -141,6 +147,8 @@ input[type=checkbox]{accent-color:var(--accent)}
   .top{padding-left:calc(14px + env(safe-area-inset-left));padding-right:calc(14px + env(safe-area-inset-right))}
   .brand{--ls:.3em;font-size:12px}
   .seg button{padding:7px 10px;min-height:34px}
+  .seg button:not(.on){display:none}
+  .seg button.on::after{content:"\25BE";margin-left:6px;font-size:10px;opacity:.75}
   .bottom{bottom:calc(10px + env(safe-area-inset-bottom))}
   .dock{padding:10px}
   .row{gap:6px}
@@ -169,6 +177,7 @@ body.drag::after{content:"Drop music";position:fixed;inset:14px;z-index:5;border
   <div class="seg" id="themeSeg">
     <button data-t="apple">Apple Music</button>
     <button data-t="spotify">Spotify</button>
+    <button data-t="ytm">YouTube Music</button>
   </div>
 </header>
 
@@ -275,7 +284,8 @@ const ICON={
 };
 const THEMES={
   apple:[[.98,.18,.28],[.64,.30,.96],[1,.54,.24]],
-  spotify:[[.12,.84,.38],[.05,.36,.18],[.12,.2,.39]]
+  spotify:[[.12,.84,.38],[.05,.36,.18],[.12,.2,.39]],
+  ytm:[[1,.06,.16],[.45,.02,.08],[.16,.16,.2]]
 };
 const audio=$('audio');
 const VERSION=document.querySelector('meta[name=version]').content;
@@ -294,6 +304,9 @@ const VERSION=document.querySelector('meta[name=version]').content;
 })();
 
 // ---------- state ----------
+// each theme's artwork shape: disc (0 or 1), corner roundness, and how dark its backdrop is
+const SHAPE={apple:[0,.3,0],spotify:[1,.3,1],ytm:[0,.1,1]},SKINS=Object.keys(SHAPE);
+let rrF=.3,darkF=0;
 let theme='apple',themeF=0,mode='idle',sens=1,usePhotoColors=true;
 // beat is the detected pulse; vb is that pulse scaled by the Intensity dial, and is what the visuals use
 const L={bass:0,mid:0,treb:0,beat:0,vb:0};
@@ -315,7 +328,7 @@ void main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);gl_Position=vec4(p*2.-
 const FS=`#version 300 es
 precision highp float;
 uniform vec2 uRes;
-uniform float uTime,uBass,uMid,uTreb,uBeat,uTheme,uMix,uHas,uAspA,uAspB,uArt,uRot,uCy,uBg,uFlow,uDip,uVar,uWarp,uCx;
+uniform float uTime,uBass,uMid,uTreb,uBeat,uTheme,uMix,uHas,uAspA,uAspB,uArt,uRot,uCy,uBg,uFlow,uDip,uVar,uWarp,uCx,uRR,uDark;
 uniform vec3 uC1,uC2,uC3;
 uniform sampler2D uA,uB;
 out vec4 o;
@@ -338,7 +351,7 @@ vec3 clouds(vec2 uv,vec2 p,float asp,float t){
   col=mix(col,photo(uv+d*(.12+uBass*.1),asp,5.5),uHas*.5);
   vec3 ap=col*(.62+.3*uBass+.12*uBeat);
   vec3 sp=mix(vec3(.07),col*.85,clamp(pow(uv.y,1.4)*.8+uBass*.15+uBeat*.08,0.,1.));
-  return mix(ap,sp,uTheme);
+  return mix(ap,sp,uDark);
 }
 // 1 aurora: ribbons of light that flare on the beat
 vec3 aurora(vec2 p,float t){
@@ -478,14 +491,14 @@ void main(){
     else if(bg==7)col=waves(p);
     else if(bg==8)col=mosaic(p,t);
     else col=edit(uv,asp);
-    col=mix(col,mix(vec3(.07),col,.85),uTheme);
+    col=mix(col,mix(vec3(.07),col,.85),uDark);
   }
   col*=(1.-.3*dot(p,p))*(1.-uDip);
 
   // artwork: rounded square (Apple) morphing to a spinning disc (Spotify)
   float s=uArt*(1.+uBeat*.05+uBass*.03);
   vec2 q=(p-vec2(uCx,uCy))/s;
-  float rr=.3;
+  float rr=uRR;
   float dd=mix(length(max(abs(q)-1.+rr,0.))-rr,length(q)-1.,uTheme);
   col*=1.-.4*exp(-max(dd,0.)*3.);
   col+=mix(uC1,vec3(1.),.3)*exp(-max(dd,0.)*6.)*uBeat*.3;
@@ -515,7 +528,7 @@ function initGL(){
   gl.linkProgram(pr);
   if(!gl.getProgramParameter(pr,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(pr));
   gl.useProgram(pr);
-  for(const n of ['uRes','uTime','uBass','uMid','uTreb','uBeat','uTheme','uMix','uHas','uAspA','uAspB','uArt','uRot','uCy','uBg','uFlow','uDip','uVar','uWarp','uCx','uC1','uC2','uC3','uA','uB'])
+  for(const n of ['uRes','uTime','uBass','uMid','uTreb','uBeat','uTheme','uMix','uHas','uAspA','uAspB','uArt','uRot','uCy','uBg','uFlow','uDip','uVar','uWarp','uCx','uRR','uDark','uC1','uC2','uC3','uA','uB'])
     U[n]=gl.getUniformLocation(pr,n);
   gl.uniform1i(U.uA,0);gl.uniform1i(U.uB,1);
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
@@ -951,7 +964,8 @@ function drawFx(dt){
   x.clearRect(0,0,W,H);
   const cx=W/2+cxOff*H,cy=H/2-cyOff*H,R=artS*H*(1+L.vb*.05+L.bass*.03),sp=theme=='spotify';
   const p0=pal[0],mx=Math.max(...p0,.001);
-  const acc=sp?p0.map(v=>Math.round(Math.min(1,v/mx)*255)).join(','):'255,255,255';
+  const yt=theme=='ytm';
+  const acc=sp||yt?p0.map(v=>Math.round(Math.min(1,v/mx)*255)).join(','):'255,255,255';
   x.lineCap='round';
 
   for(let i=rings.length-1;i>=0;i--){
@@ -959,7 +973,7 @@ function drawFx(dt){
     if(g.a<=0){rings.splice(i,1);continue}
     const r=R*g.r;
     x.strokeStyle=`rgba(${acc},${g.a*.45})`;x.lineWidth=2*dpr;x.beginPath();
-    if(sp)x.arc(cx,cy,r,0,Math.PI*2);else x.roundRect(cx-r,cy-r,r*2,r*2,r*.3);
+    if(sp)x.arc(cx,cy,r,0,Math.PI*2);else x.roundRect(cx-r,cy-r,r*2,r*2,r*rrF);
     x.stroke();
   }
 
@@ -978,6 +992,14 @@ function drawFx(dt){
       const v=bars[i<N?i:2*N-1-i],a=-Math.PI/2+(i+.5)/(N*2)*Math.PI*2,r0=R*1.1,r1=r0+3*dpr+v*len;
       x.strokeStyle=`rgba(${acc},${.3+v*.7})`;x.beginPath();
       x.moveTo(cx+Math.cos(a)*r0,cy+Math.sin(a)*r0);x.lineTo(cx+Math.cos(a)*r1,cy+Math.sin(a)*r1);x.stroke();
+    }
+  }else if(yt){
+    // squared bars rising from a baseline under the artwork, bass on the left
+    const n=32,bw=R*2/n,y0=cy+R*1.45;
+    for(let i=0;i<n;i++){
+      const v=bars[Math.floor(i/n*N*.85)],h=2*dpr+v*R*.42;
+      x.fillStyle=`rgba(${acc},${.45+v*.55})`;
+      x.fillRect(cx-R+i*bw+bw*.18,y0-h,bw*.64,h);
     }
   }else{
     // pill bars under the card, mirrored outward from the center
@@ -1293,7 +1315,8 @@ function step(ms){
   analyse(dt,now);
   L.vb=Math.min(1.3,L.beat*fxk);
 
-  themeF+=((theme=='spotify'?1:0)-themeF)*Math.min(1,dt*6);
+  const shp=SHAPE[theme],kT=Math.min(1,dt*6);
+  themeF+=(shp[0]-themeF)*kT;rrF+=(shp[1]-rrF)*kT;darkF+=(shp[2]-darkF)*kT;
   artS+=(artT-artS)*Math.min(1,dt*6);cyOff+=(cyT-cyOff)*Math.min(1,dt*6);cxOff+=(cxT-cxOff)*Math.min(1,dt*6);
   rot=(rot+dt*(.12+L.mid*.5))%(Math.PI*2);
   // scenes move faster with the music; switching dips through black to hide the cut
@@ -1314,7 +1337,7 @@ function step(ms){
   gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,has?B.tex:blankTex);
   gl.uniform2f(U.uRes,W,H);gl.uniform1f(U.uTime,now);
   gl.uniform1f(U.uBass,L.bass);gl.uniform1f(U.uMid,L.mid);gl.uniform1f(U.uTreb,L.treb);gl.uniform1f(U.uBeat,L.vb);
-  gl.uniform1f(U.uTheme,themeF);gl.uniform1f(U.uMix,S?(bfade?bmix:0):fading?mixF*mixF*(3-2*mixF):0);gl.uniform1f(U.uHas,has?1:0);
+  gl.uniform1f(U.uTheme,themeF);gl.uniform1f(U.uRR,rrF);gl.uniform1f(U.uDark,darkF);gl.uniform1f(U.uMix,S?(bfade?bmix:0):fading?mixF*mixF*(3-2*mixF):0);gl.uniform1f(U.uHas,has?1:0);
   gl.uniform1f(U.uAspA,has?A.asp:1);gl.uniform1f(U.uAspB,has?B.asp:1);
   gl.uniform1f(U.uArt,artS);gl.uniform1f(U.uCy,cyOff);gl.uniform1f(U.uCx,cxOff);
   gl.uniform1f(U.uBg,S?9:bg);gl.uniform1f(U.uVar,bvar);gl.uniform1f(U.uWarp,warp);gl.uniform1f(U.uFlow,flow);gl.uniform1f(U.uDip,dip);gl.uniform1f(U.uRot,rot*themeF);
@@ -1372,7 +1395,11 @@ function toggleFull(){
   document.fullscreenElement?document.exitFullscreen():el.requestFullscreen().catch(()=>{});
 }
 
-$('themeSeg').onclick=e=>{if(e.target.dataset.t)setTheme(e.target.dataset.t)};
+// tapping the theme that is already selected moves on to the next one
+$('themeSeg').onclick=e=>{
+  const t=e.target.dataset.t;
+  if(t)setTheme(t==theme?SKINS[(SKINS.indexOf(theme)+1)%SKINS.length]:t);
+};
 $('bMusic').onclick=()=>$('fMusic').click();
 $('fMusic').onchange=e=>{addTracks([...e.target.files]);e.target.value=''};
 $('bFull').hidden=!document.documentElement.requestFullscreen;
@@ -1466,7 +1493,7 @@ addEventListener('keydown',e=>{
   if(e.target.tagName=='INPUT')return;
   if(e.code=='Space'){if(e.target.tagName=='BUTTON')return;e.preventDefault();togglePlay()}
   else if(e.key=='f'||e.key=='F')toggleFull();
-  else if(e.key=='t'||e.key=='T')setTheme(theme=='apple'?'spotify':'apple');
+  else if(e.key=='t'||e.key=='T')setTheme(SKINS[(SKINS.indexOf(theme)+1)%SKINS.length]);
   else if(e.key=='b'||e.key=='B')setBg(bgNext+1);
 });
 addEventListener('dragover',e=>{e.preventDefault();document.body.classList.add('drag')});
@@ -1482,7 +1509,8 @@ if(!gl){$('hint').textContent='This browser does not support WebGL2'}
 else{
   initGL();resize();
   let saved='apple';try{saved=localStorage.getItem('pulse-theme')||'apple'}catch{}
-  setTheme(saved);themeF=saved=='spotify'?1:0;pal=THEMES[saved].map(c=>c.slice());
+  if(!SHAPE[saved])saved='apple';
+  setTheme(saved);[themeF,rrF,darkF]=SHAPE[saved];pal=THEMES[saved].map(c=>c.slice());
   let sb=0;try{sb=+localStorage.getItem('pulse-bg')||0}catch{}
   setBg(sb,true);bg=bgNext;
   let sl='';try{sl=localStorage.getItem('pulse-lyrics')||''}catch{}
