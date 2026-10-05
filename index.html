@@ -2,7 +2,7 @@
 <html lang="en" data-skin="apple">
 <head>
 <meta charset="utf-8">
-<meta name="version" content="2026.10.04-14">
+<meta name="version" content="2026.10.04-15">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'unsafe-inline'; img-src data: blob: https://i.ytimg.com; media-src blob: https: http:; connect-src 'self' https:; frame-src https://www.youtube.com; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -92,6 +92,13 @@ body.gaming .ui{opacity:0;pointer-events:none}
   background:var(--panel);border:1px solid var(--panel-border);border-radius:var(--radius);
   -webkit-backdrop-filter:blur(var(--blur)) saturate(1.6);backdrop-filter:blur(var(--blur)) saturate(1.6)}
 .bpPanel h2{margin:0;font-size:15px;font-weight:700;letter-spacing:.42em;padding-left:.42em}
+.bpPanel{max-height:calc(100% - 24px);overflow-y:auto}
+.bpLib{width:100%;display:grid;gap:6px}
+.bpLibHead{font-size:11px;font-weight:700;letter-spacing:.3em;color:var(--dim)}
+#bpLibList{display:grid;gap:6px;max-height:138px;overflow-y:auto}
+.bpSongRow{display:flex;gap:6px}
+.bpSongRow button:first-child{flex:1;min-width:0;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bpSongRow small{color:var(--dim);font-weight:400;margin-left:8px}
 .bpDim{margin:0;font-size:13px;line-height:1.45;color:var(--dim)}
 .bpBtns{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
 .bpBtns button{min-width:96px;min-height:40px}
@@ -275,6 +282,11 @@ body.drag::after{content:"Drop music";position:fixed;inset:14px;z-index:5;border
     <p class="bpDim" id="bpSong">Pick a song from your device. Power builds the circles from its beat.</p>
     <div class="bpBtns"><button id="bpPick">Choose a song</button></div>
     <div class="bpLink"><input type="url" id="bpLinkIn" placeholder="or paste an MP3 or MP4 link" autocomplete="off" autocapitalize="off" spellcheck="false"><button id="bpLinkGo">Load</button></div>
+    <div class="bpLib">
+      <div class="bpLibHead">PRE-LOADED SONGS</div>
+      <div id="bpLibList"></div>
+      <button id="bpKeep" hidden>Keep this song in the list</button>
+    </div>
     <div class="seg" id="bpDiff"><button data-d="0">Easy</button><button data-d="1">Normal</button><button data-d="2">Hard</button></div>
     <label class="bpOff" title="Raise this if you find yourself hitting late, for example on Bluetooth headphones">Audio delay<input type="range" id="bpOffset" min="-150" max="150" step="5" value="0"><span id="bpOffVal">0 ms</span></label>
     <p class="bpDim">Click each circle as its ring closes on it. Z or X also hit at the cursor. Esc pauses.</p>
@@ -1545,7 +1557,7 @@ function bpOpen(){
   if(bp.open)return;
   closeExt();stopOthers('none');
   bp.open=true;document.body.classList.add('gaming');$('game').hidden=false;
-  bpResize();bpShow('menu');
+  bpResize();bpShow('menu');bpLibRender();
 }
 function bpStopSong(){
   if(bp.src){bp.src.onended=null;try{bp.src.stop()}catch{}bp.src.disconnect();bp.src=null}
@@ -1560,7 +1572,7 @@ function bpClose(){
 async function bpLoad(file){
   if(!file)return;
   bpStopSong();
-  bp.buf=bp.an=bp.lyr=null;bp.notes=[];
+  bp.buf=bp.an=bp.lyr=null;bp.notes=[];bp.file=file;bpKeepSync();
   $('bpStart').disabled=true;
   const name=file.name.replace(/\.[^.]+$/,'');
   bpSet('bpSong','Building the map for "'+name+'"…');
@@ -1579,7 +1591,7 @@ async function bpLoad(file){
     if(bp.tr===tr)bpSet('bpSong','That file could not be read as audio. Try another song.');
     return;
   }
-  bpBuild();
+  bpBuild();bpKeepSync();
   $('bpStart').disabled=!bp.notes.length;
   if(bp.notes.length)bpSongLine();else bpSet('bpSong','No clear beat was found in that song. Try another one.');
   // lyrics are a bonus: look them up once the file's own title has had a moment to be read
@@ -1595,6 +1607,79 @@ async function bpLoad(file){
     }catch{}
   },900);
 }
+// ---- Pre-Loaded Songs ----
+// one built-in practice track that Power generates itself, plus any songs the player chooses to keep.
+// Kept songs are stored in this browser on this device only; they are never uploaded to the site.
+const bpDb=(rw,fn)=>new Promise((res,rej)=>{
+  const o=indexedDB.open('power-songs',1);
+  o.onupgradeneeded=()=>o.result.createObjectStore('songs');
+  o.onerror=()=>rej(o.error);
+  o.onsuccess=()=>{
+    const tx=o.result.transaction('songs',rw),rq=fn(tx.objectStore('songs'));
+    tx.oncomplete=()=>res(rq.result);tx.onerror=tx.onabort=()=>rej(tx.error);
+  };
+});
+let bpSaved=[];
+const BP_BUILTIN='Power Test Beat';
+// the practice track: kick on every beat, snare on 2 and 4, off-beat hats, a bass line and a small melody
+function bpTestTrack(){
+  const sr=44100,secs=60,len=sr*secs,bpm=128,T=60/bpm,lead=.5,buf=new ArrayBuffer(44+len*2),dv=new DataView(buf);
+  const W=(o,s)=>[...s].forEach((ch,i)=>dv.setUint8(o+i,ch.charCodeAt(0)));
+  W(0,'RIFF');dv.setUint32(4,36+len*2,true);W(8,'WAVEfmt ');dv.setUint32(16,16,true);dv.setUint16(20,1,true);dv.setUint16(22,1,true);
+  dv.setUint32(24,sr,true);dv.setUint32(28,sr*2,true);dv.setUint16(32,2,true);dv.setUint16(34,16,true);W(36,'data');dv.setUint32(40,len*2,true);
+  let seed=7;const rnd=()=>{seed=seed*1664525+1013904223>>>0;return seed/4294967296*2-1};
+  const roots=[55,55,43.65,49],sc=[220,261.63,329.63,392,440,392,329.63,261.63];
+  for(let i=0;i<len;i++){
+    const t=i/sr-lead;let s=0;
+    if(t>=0){
+      const beat=Math.floor(t/T),k=t-beat*T,bar=beat>>2,half=T/2;
+      s+=Math.sin(2*Math.PI*(50+110*Math.exp(-k*25))*k)*Math.exp(-k*9)*.75;
+      if(beat%2)s+=rnd()*.28*Math.exp(-k*22);
+      s+=rnd()*.1*Math.exp(-((t+half)%T)*55);
+      s+=Math.sin(2*Math.PI*roots[bar%4]*t)*.22*Math.exp(-(t%half)*3);
+      if(bar>=4)s+=Math.sin(2*Math.PI*sc[(Math.floor(t/half)+bar)%8]*t)*.07*Math.exp(-(t%half)*6);
+    }
+    dv.setInt16(44+i*2,Math.max(-1,Math.min(1,s*Math.min(1,(secs-i/sr)/1.5)))*30000,true);
+  }
+  return new File([buf],BP_BUILTIN+'.wav',{type:'audio/wav'});
+}
+async function bpLibRender(){
+  try{bpSaved=await bpDb('readonly',s=>s.getAllKeys())}catch{bpSaved=[]}
+  const list=$('bpLibList');
+  list.textContent='';
+  const row=(label,note,onPick,onRemove)=>{
+    const r=document.createElement('div'),b=document.createElement('button'),sm=document.createElement('small');
+    r.className='bpSongRow';b.textContent=label;sm.textContent=note;b.appendChild(sm);b.onclick=onPick;r.appendChild(b);
+    if(onRemove){const xb=document.createElement('button');xb.textContent='×';xb.title='Remove from the list';xb.onclick=onRemove;r.appendChild(xb)}
+    list.appendChild(r);
+  };
+  row(BP_BUILTIN,'128 BPM · built in',()=>bpLoad(bpTestTrack()));
+  for(const key of bpSaved){
+    row(String(key).replace(/\.[^.]+$/,''),'saved on this device',async()=>{
+      try{
+        const blob=await bpDb('readonly',s=>s.get(key));
+        if(blob)bpLoad(new File([blob],key,{type:blob.type||'audio/mpeg'}));
+      }catch{bpSet('bpSong','That saved song could not be opened.')}
+    },async()=>{
+      try{await bpDb('readwrite',s=>s.delete(key))}catch{}
+      bpLibRender();
+    });
+  }
+  bpKeepSync();
+}
+// offer to keep the loaded song, unless it is the built-in one or already in the list
+function bpKeepSync(){
+  const fl=bp.file;
+  $('bpKeep').hidden=!(fl&&bp.buf&&fl.name!=BP_BUILTIN+'.wav'&&!bpSaved.includes(fl.name));
+}
+async function bpKeep(){
+  if(!bp.file)return;
+  try{
+    await bpDb('readwrite',s=>s.put(bp.file,bp.file.name));
+    await bpLibRender();
+  }catch{bpSet('bpSong','This song could not be saved on this device (storage may be full or switched off).')}
+}
+
 // a direct link to an audio or video file: download it, then treat it exactly like an uploaded song
 async function bpLoadLink(){
   const u=$('bpLinkIn').value.trim();
@@ -1763,6 +1848,7 @@ $('bpDiff').onclick=e=>{if(e.target.dataset.d)bpSetDiff(+e.target.dataset.d)};
 $('bpOffset').oninput=e=>{bp.off=+e.target.value;bpSet('bpOffVal',bp.off+' ms');save('pulse-bp-off',bp.off)};
 $('bpStart').onclick=bpStart;
 $('bpLinkGo').onclick=bpLoadLink;
+$('bpKeep').onclick=bpKeep;
 $('bpLinkIn').onkeydown=e=>{if(e.key=='Enter')bpLoadLink()};
 $('bpExit').onclick=$('bpExit2').onclick=bpClose;
 $('bpPauseBtn').onclick=bpPause;
